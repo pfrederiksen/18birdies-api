@@ -27,7 +27,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "packaging>=24.2", "pytest>=8", "ruff>=0.8", "twine>=6.1"]
+dev = ["build>=1.2", "packaging>=24.2", "pytest>=8", "ruff==0.17.1", "twine>=6.1"]
 timezones = ["tzdata>=2024.1"]
 
 [project.urls]

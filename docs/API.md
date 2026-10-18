@@ -11,8 +11,10 @@ from eighteenbirdies import (
 
 client = EighteenBirdiesClient.from_export("examples/synthetic-export.json")
 client = EighteenBirdiesClient.import_export(
-    "examples/synthetic-export.json", store_path="local-golf.json",
-    acquired_at=None, timezone_name="UTC",
+    "examples/synthetic-export.json",
+    store_path="local-golf.json",
+    acquired_at=None,
+    timezone_name="UTC",
 )
 client = EighteenBirdiesClient(store_path="local-golf.json", timezone_name="UTC")
 ```
