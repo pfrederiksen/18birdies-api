@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report A Security Vulnerability Privately
+    url: https://github.com/pfrederiksen/18birdies-api/security/advisories/new
+    about: Use a private security advisory for vulnerabilities. Exclude credentials and real account exports.
