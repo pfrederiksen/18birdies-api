@@ -1,0 +1,42 @@
+{
+  "myData": {
+    "activityData": {
+      "roundCount": 1,
+      "rounds": [
+        {
+          "id": "demo-round-01",
+          "timestamp": 1767268800000,
+          "clubId": {"id": "demo-course-01"},
+          "strokes": 9,
+          "score": 1,
+          "holeStrokes": [4, 5, 0],
+          "stats": {
+            "putts": 4,
+            "puttHoleCount": 0,
+            "fairwayMiddles": 1,
+            "fairwayHoleCount": 1,
+            "gir": 1,
+            "girHoleCount": 2,
+            "recommendedStats": []
+          },
+          "shotEntries": [
+            {
+              "holeNumber": 1,
+              "timestamp": 1767268800000,
+              "stickTypeAndNumber": {"type": "WOOD", "number": "1", "loftAngle": 10},
+              "distanceInYards": 225
+            },
+            {
+              "holeNumber": 2,
+              "stickTypeAndNumber": {"type": "IRON", "number": "7"},
+              "distanceInYards": 135
+            }
+          ]
+        }
+      ]
+    },
+    "clubData": {
+      "playedClubs": [{"clubId": "demo-course-01", "name": "Example Golf Course"}]
+    }
+  }
+}

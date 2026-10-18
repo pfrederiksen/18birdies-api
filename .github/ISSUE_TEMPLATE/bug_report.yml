@@ -1,0 +1,36 @@
+name: Bug Report
+description: Report a reproducible problem using invented data only.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach account exports, stores, credentials, real round IDs,
+        names, coordinates, screenshots of account details, or private logs.
+        Use a small invented example. For a security issue, read SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Package And Python Versions
+      placeholder: "18birdies 0.1.0; Python 3.12; Linux"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic Reproduction
+      description: Minimal commands and invented JSON that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected And Actual Behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy Check
+      options:
+        - label: This report contains no real account data or credentials.
+          required: true

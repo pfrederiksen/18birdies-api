@@ -1,0 +1,24 @@
+# Exports and runtime state are private. Only explicit synthetic examples belong here.
+*.json
+!examples/synthetic-export.json
+*.lock
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.sqlite*
+private/
+downloads/
+data/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+.coverage
+htmlcov/

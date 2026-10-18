@@ -1,0 +1,17 @@
+name: Feature Request
+description: Suggest an improvement to local export processing.
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Describe the outcome without including personal golf data.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Behavior
+      description: Keep processing local and use invented examples.
+    validations:
+      required: true
