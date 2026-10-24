@@ -1,7 +1,24 @@
 # Security
 
-This project processes golf exports locally. The core SDK and CLI do not log in,
-make network requests, upload data, or emit telemetry. They do not encrypt files.
+Explicit `retrieve --method cloud-env` consumes the two fixed Personal Vault
+environment-variable inputs documented in `docs/CLOUD_PREPARATION.md`. Actual
+values are available to task code. It removes the input keys from its own
+environment before connecting, starts no subprocess, and sends JSON only to the
+fixed official host over a required proxy with verified TLS. Values and tokens
+remain in memory and are excluded from diagnostics. Parent-process environments
+and process memory cannot be reliably erased by this Python process. Other modes
+never fall back to these values. The network-secret mode remains blocked.
+
+This project processes golf exports locally. Offline commands make no network
+requests or telemetry calls. Explicit `retrieve` uses the official HTTPS
+email/password export flow; hidden interactive input and the returned token are
+kept in process memory, never persisted or logged. No redirects, automatic
+retries, cookies, credential stores, or existing browser sessions are used.
+Security challenges and denials stop direct retrieval. An explicitly selected
+`--method browser` fallback opens a fresh visible browser for user authentication.
+No persistent browser profile is created. Retrieved archives contain the complete
+account data. Files are not encrypted; Python cannot guarantee memory erasure.
+Do not enable debugging/tracing or terminal recording while entering credentials.
 
 An account export may contain profile details, messages, contacts, identifiers,
 and precise shot locations. Keep the original export outside your repository.
