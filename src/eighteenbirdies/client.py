@@ -995,6 +995,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in (
+        "retrieve",
         "import",
         "list",
         "round",
@@ -1007,6 +1008,12 @@ def main(argv: list[str] | None = None) -> int:
     ):
         child = sub.add_parser(name)
         child.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+        if name == "retrieve":
+            child.add_argument("--output", type=Path, required=True)
+            child.add_argument("--timeout", type=int, default=300)
+            child.add_argument(
+                "--method", choices=("direct", "browser", "cloud", "cloud-env"), default="direct"
+            )
         if name == "import":
             child.add_argument("path", type=Path)
             child.add_argument(
@@ -1019,7 +1026,13 @@ def main(argv: list[str] | None = None) -> int:
             child.add_argument("id")
     args = parser.parse_args(argv)
     try:
-        if args.command == "import":
+        if args.command == "retrieve":
+            from .retrieval import retrieve
+
+            if args.export:
+                raise EighteenBirdiesError("--export cannot be used with retrieve")
+            result = retrieve(args.output, timeout=args.timeout, method=args.method)
+        elif args.command == "import":
             if args.export:
                 raise EighteenBirdiesError("--export cannot be used with import")
             client = EighteenBirdiesClient.import_export(
@@ -1055,7 +1068,12 @@ def main(argv: list[str] | None = None) -> int:
                 }[args.command]()
         print(json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False))
         return 0
-    except (EighteenBirdiesError, OSError):
+    except (EighteenBirdiesError, OSError) as error:
+        from .retrieval import RetrievalError
+
+        if isinstance(error, RetrievalError):
+            print(f"18Birdies retrieval error: {error}", file=sys.stderr)
+            return 2
         # Never echo provider JSON, identifiers, paths, or exception payloads.
         print(
             "18Birdies export error: invalid input, unavailable file, or unknown entity; see the client documentation.",

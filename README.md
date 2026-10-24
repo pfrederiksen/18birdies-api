@@ -10,9 +10,10 @@ An unofficial Python SDK and JSON CLI for **official 18Birdies account exports**
 Explore rounds, hole scores, recorded shots, measured club distances, course
 history, and trends without uploading an export or handing over credentials.
 
-This is an export-backed client, **not a live API**. It does not log in, download
-exports, scrape endpoints, run a server, contact analytics services, or sync in
-the background. It is not affiliated with, endorsed by, or supported by
+This is an export-backed client, **not a live API**. Offline commands do not
+contact the network. An explicitly invoked retrieval command downloads an export
+through the official flow using direct HTTP or an optional browser fallback. It does not sync in the background.
+It is not affiliated with, endorsed by, or supported by
 18Birdies. The name identifies the compatible export format.
 
 ## Quick Start
@@ -59,6 +60,84 @@ otherwise `~/.local/share/eighteenbirdies/export.json`. It never writes into the
 installed package. Global `--store PATH` chooses another location. Global
 `--export PATH` reads an export directly. Output is always JSON; `--json` is
 accepted for clarity. Errors exit 2 without echoing private input.
+
+## Retrieve Your Archive
+
+The default retrieval command is **browser-free** and requires no extra packages:
+
+```sh
+18birdies retrieve --output /private/18Birdies_archive.json --timeout 300
+18birdies --export /private/18Birdies_archive.json summary --json
+18birdies import /private/18Birdies_archive.json --json
+```
+
+Run it in your own interactive terminal. It prompts for your email and password
+with both inputs hidden. In this default terminal mode, credentials are never
+accepted as command-line options
+or read from environment variables, files, credential stores, or existing browser
+sessions. They and the authentication token remain in process memory only. No
+cookies or credentials are saved, and no automatic authentication retry occurs.
+Python cannot guarantee erasure of process memory; files are not encrypted.
+
+Use an existing private local directory and a new filename. Retrieval validates
+the complete JSON account archive with the existing parser before atomically
+publishing it without replacing any file or symlink. POSIX output uses mode
+0600; Windows inherits account ACLs. The local filesystem must support hard
+links. Retrieved archives include private account categories beyond golf.
+Successful output reports byte count and SHA256 without account data or paths.
+Use `import` explicitly to update a golf store.
+
+The direct flow reproduces the email/password login and export POSTs observed
+in the official website's public client assets. It is an unofficial integration,
+not a published or guaranteed API. Phone verification, social sign-in, MFA,
+CAPTCHA, redirects, access denial, and bot challenges are not automated. The
+command stops with a safe error when a response requires unsupported action;
+use the official account flow to resolve it. No browser launches automatically.
+
+`--timeout` (30–900 seconds, default 300) sets a shared network deadline after
+hidden credential entry. Individual socket operations have at most 30 seconds;
+operating-system DNS resolution can have its own timeout. Human terminal input
+has no deadline; Ctrl-C cancels cleanly. Responses are bounded (64 KiB for login,
+64 MiB for the archive), must be uncompressed JSON, and are not redirected or
+retried. Existing parser schema/depth/node/round/shot limits apply before saving.
+Interrupted or invalid downloads are not published. Handled failures clean the
+temporary file; abrupt process termination can leave a private temporary file.
+Existing directory permissions are unchanged. Do not use a shared/synced folder.
+Retrieval refuses to start when `DEBUG` or `PWDEBUG` is nonempty.
+
+An optional **explicit browser fallback** is also available:
+
+```sh
+python -m pip install '.[retrieve]'
+python -m playwright install chromium
+18birdies retrieve --method browser --output /private/18Birdies_archive.json --timeout 900
+```
+
+This opens a fresh visible Chromium session at the
+[official export page](https://18birdies.com/download-account-data/).
+Sign in directly there, complete security checks yourself, then select
+**Request My Data**. No browser profile is saved; closing the window cancels.
+Its timeout bounds the interactive download wait; startup and initial navigation
+each have a separate 30-second limit. It accepts the official UTF-8 JSON data-URL
+download only, ignoring the remote filename. Encoded and decoded sizes are
+bounded; compressed archives and other download URLs are rejected. Neither
+method extracts archive members or accepts server-supplied local paths. Do not
+enable Playwright tracing, debug logging, or video recording with private data.
+The official website may load its own third-party resources; the package adds
+no analytics.
+
+See [protocol evidence and limits](docs/RETRIEVAL.md). Tests use invented data and
+mock HTTP/browser responses; a real Chromium synthetic data-URL download was
+also verified. A separately authorized cloud-env integration test retrieved and parsed an
+official archive; no account data or credentials are included.
+
+Saved cloud environment preparation is documented in
+[Cloud preparation](docs/CLOUD_PREPARATION.md). The proposed proxy adapter has
+offline synthetic coverage; `retrieve --method cloud` currently stops before
+reading secrets or sending requests because proxy JSON substitution is unverified.
+The separately selected `retrieve --method cloud-env` uses actual Personal Vault
+environment-variable values through the required verified proxy transport. See
+the cloud preparation guide for exact keys and scope; never put values in commands.
 
 ## Python SDK
 
