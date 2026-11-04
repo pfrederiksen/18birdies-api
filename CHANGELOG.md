@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0
+
 - Documented that global `--store` comes before `import --new-store`. The
   shortened-archive error now shows `--store PATH import EXPORT --new-store`.
 - Published exported scoring counts and fairway/green miss directions, with the

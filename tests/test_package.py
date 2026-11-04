@@ -25,7 +25,7 @@ class PackageTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as stopped:
                 api.main(["--version"])
         self.assertEqual(stopped.exception.code, 0)
-        self.assertEqual(output.getvalue().strip(), "18birdies 0.2.0")
+        self.assertEqual(output.getvalue().strip(), "18birdies 0.3.0")
 
     def test_all_core_processing_works_with_network_calls_forbidden(self):
         import http.client
