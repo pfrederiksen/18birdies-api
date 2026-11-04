@@ -94,6 +94,10 @@ class EighteenBirdiesError(ValueError):
     """Malformed or unsupported export, missing store, or unknown entity."""
 
 
+class ReducedArchiveError(EighteenBirdiesError):
+    """The export drops rounds that the current store already contains."""
+
+
 def _number(value: Any) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -263,12 +267,12 @@ def _read(path: str | Path) -> tuple[dict, bytes]:
     return result, data
 
 
-def _stats(value: Any) -> dict:
+def _validate_stats(value: Any) -> None:
+    """Reject malformed known stat fields. Unknown fields stay in the stored subtree."""
     if value is None:
-        return {}
+        return
     if not isinstance(value, dict):
         raise EighteenBirdiesError("Round stats must be an object")
-    result = {}
     for key in STAT_COUNTS | SG_FIELDS:
         item = value.get(key)
         if item is not None:
@@ -276,11 +280,9 @@ def _stats(value: Any) -> dict:
                 raise EighteenBirdiesError("Invalid round stat count")
             if key in SG_FIELDS and _number(item) is None:
                 raise EighteenBirdiesError("Invalid strokes-gained value")
-            result[key] = item
     recommended = value.get("recommendedStats", [])
     if not isinstance(recommended, list) or len(recommended) > 100:
         raise EighteenBirdiesError("Invalid recommended stats list")
-    result["recommendedStats"] = []
     seen = set()
     for item in recommended:
         if not isinstance(item, dict) or not isinstance(item.get("type"), str):
@@ -292,29 +294,23 @@ def _stats(value: Any) -> dict:
             raise EighteenBirdiesError("Invalid recommended stat availability flag")
         if item.get("value") is not None and _number(item["value"]) is None:
             raise EighteenBirdiesError("Invalid recommended stat value")
-        result["recommendedStats"].append(
-            {k: item[k] for k in ("type", "noStats", "value") if k in item}
-        )
-    return value
 
 
-def _shot(value: Any) -> dict:
+def _validate_shot(value: Any) -> None:
+    """Reject malformed known shot fields. Unknown fields stay in the stored subtree."""
     if not isinstance(value, dict):
         raise EighteenBirdiesError("Shot entry must be an object")
-    result = {k: value[k] for k in SHOT_FIELDS if k in value}
-    _timestamp(result.get("timestamp"))
-    if result.get("holeNumber") is not None and not _integer(result["holeNumber"], 1, 18):
+    known = {key: value[key] for key in SHOT_FIELDS if key in value}
+    _timestamp(known.get("timestamp"))
+    if known.get("holeNumber") is not None and not _integer(known["holeNumber"], 1, 18):
         raise EighteenBirdiesError("Shot hole number must be 1 through 18")
-    distance = result.get("distanceInYards")
+    distance = known.get("distanceInYards")
     if distance is not None and (_number(distance) is None or not 0 <= distance <= 10000):
         raise EighteenBirdiesError("Invalid shot distance in yards")
-    club = result.get("stickTypeAndNumber")
+    club = known.get("stickTypeAndNumber")
     if club is not None:
         if not isinstance(club, dict):
             raise EighteenBirdiesError("Invalid shot club")
-        result["stickTypeAndNumber"] = {
-            k: club[k] for k in ("type", "number", "loftAngle") if k in club
-        }
         for key in ("type", "number"):
             if club.get(key) is not None and (
                 not isinstance(club[key], str) or len(club[key]) > 100
@@ -325,17 +321,15 @@ def _shot(value: Any) -> dict:
         ):
             raise EighteenBirdiesError("Invalid shot club loft")
     for key in ("startPoint", "endPoint"):
-        point = result.get(key)
+        point = known.get(key)
         if point is None:
             continue
         if not isinstance(point, dict):
             raise EighteenBirdiesError("Invalid shot coordinates")
-        result[key] = {k: point[k] for k in ("latitude", "longitude") if k in point}
         for coordinate, bound in (("latitude", 90), ("longitude", 180)):
             n = point.get(coordinate)
             if n is not None and (_number(n) is None or not -bound <= n <= bound):
                 raise EighteenBirdiesError("Invalid shot coordinates")
-    return value
 
 
 def _golf(activity: Any, clubs: Any) -> dict:
@@ -398,7 +392,7 @@ def _golf(activity: Any, clubs: Any) -> dict:
         if any(n is not None and not _integer(n, 0, 1000) for n in holes):
             raise EighteenBirdiesError("Invalid per-hole score")
         item["holeStrokes"] = holes
-        item["stats"] = _stats(item.get("stats"))
+        _validate_stats(item.get("stats"))
         # Handicaps are retained as source strings, never relabeled as GHIN.
         if item.get("roundHandicap") is not None and (
             not isinstance(item["roundHandicap"], (str, int, float))
@@ -411,7 +405,7 @@ def _golf(activity: Any, clubs: Any) -> dict:
         if not isinstance(shots, list) or len(shots) > 10000:
             raise EighteenBirdiesError("Invalid shot entries list")
         for shot in shots:
-            _shot(shot)
+            _validate_shot(shot)
     return {"activityData": copy.deepcopy(activity), "playedClubs": copy.deepcopy(clubs)}
 
 
@@ -621,6 +615,28 @@ def _normalize_round(raw: dict, courses: dict, date_zone=timezone.utc) -> dict:
     }
 
 
+def redact_coordinates(value: Any) -> Any:
+    """Replace shot coordinates with null. Scores and distances stay in place."""
+    if isinstance(value, list):
+        return [redact_coordinates(item) for item in value]
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if key in {
+                "latitude",
+                "longitude",
+                "start_point",
+                "end_point",
+                "startPoint",
+                "endPoint",
+            }:
+                redacted[key] = None
+            else:
+                redacted[key] = redact_coordinates(item)
+        return redacted
+    return value
+
+
 def _date_zone(timezone_name: str):
     try:
         return timezone.utc if timezone_name == "UTC" else ZoneInfo(timezone_name)
@@ -767,15 +783,20 @@ class EighteenBirdiesClient:
         store_path: str | Path | None = None,
         acquired_at: str | None = None,
         timezone_name: str = "UTC",
+        new_store: bool = False,
     ) -> EighteenBirdiesClient:
         _date_zone(timezone_name)
         envelope = _envelope(path, acquired_at)
         destination = Path(store_path or DEFAULT_STORE)
         if Path(path).resolve() == destination.resolve():
             raise EighteenBirdiesError("Import destination must differ from original export")
+        if new_store and os.path.lexists(destination):
+            raise EighteenBirdiesError("New store path already exists; choose another --store")
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock_path = destination.with_name(destination.name + ".lock")
         with file_lock(lock_path):
+            if new_store and os.path.lexists(destination):
+                raise EighteenBirdiesError("New store path already exists; choose another --store")
             if destination.exists():
                 previous = cls(store_path=destination, timezone_name=timezone_name)
                 old = previous.provenance
@@ -791,8 +812,9 @@ class EighteenBirdiesClient:
                     prior_ids = {r["source_id"] for r in previous._rounds}
                     next_ids = {r["id"] for r in envelope["golf"]["activityData"]["rounds"]}
                     if not prior_ids <= next_ids:
-                        raise EighteenBirdiesError(
-                            "Export omits previously imported rounds; prior store preserved"
+                        raise ReducedArchiveError(
+                            "Export omits previously imported rounds; prior store preserved. "
+                            "Use import --new-store --store PATH for a shortened archive."
                         )
             candidate = cls.__new__(cls)
             candidate._initialize(envelope, timezone_name)
@@ -993,6 +1015,11 @@ def main(argv: list[str] | None = None) -> int:
         "--export", type=Path, help="Read an official export without writing a store"
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--redact-coordinates",
+        action="store_true",
+        help="Replace shot coordinates with null in the JSON result",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     for name in (
         "retrieve",
@@ -1020,6 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
                 "--acquired-at",
                 help="Actual official export acquisition time (ISO8601 with timezone)",
             )
+            child.add_argument(
+                "--new-store",
+                action="store_true",
+                help="Create a separate store, including for a shortened archive. Fails if it exists.",
+            )
         if name == "list":
             child.add_argument("--limit", type=int)
         if name == "round":
@@ -1040,6 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_path=args.store,
                 acquired_at=args.acquired_at,
                 timezone_name=args.timezone,
+                new_store=args.new_store,
             )
             result = {
                 "source": SOURCE,
@@ -1066,6 +1099,12 @@ def main(argv: list[str] | None = None) -> int:
                     "capabilities": client.capabilities,
                     "snapshot": client.snapshot,
                 }[args.command]()
+        if args.redact_coordinates:
+            result = redact_coordinates(result)
+        if args.command == "retrieve":
+            from .retrieval import ARCHIVE_NOTICE
+
+            print(ARCHIVE_NOTICE, file=sys.stderr)
         print(json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False))
         return 0
     except (EighteenBirdiesError, OSError) as error:
@@ -1073,6 +1112,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if isinstance(error, RetrievalError):
             print(f"18Birdies retrieval error: {error}", file=sys.stderr)
+            return 2
+        if isinstance(error, ReducedArchiveError):
+            print(
+                "18Birdies export error: this export omits rounds already in the store. "
+                "The existing store was not changed. "
+                "Use import --new-store --store PATH for a shortened archive.",
+                file=sys.stderr,
+            )
             return 2
         # Never echo provider JSON, identifiers, paths, or exception payloads.
         print(

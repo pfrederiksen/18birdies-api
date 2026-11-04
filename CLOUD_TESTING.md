@@ -14,6 +14,7 @@ python -m unittest discover -s tests -v
 python -m pytest -q
 ruff check .
 ruff format --check .
+python -m mypy
 python -m build
 python -m twine check dist/*
 python -m pip install --no-deps --force-reinstall dist/*.whl
@@ -21,10 +22,12 @@ python -m pip install --no-deps --force-reinstall dist/*.whl
 python -m eighteenbirdies --export examples/synthetic-export.json capabilities --json
 ```
 
-The retrieval snapshot has 94 tests, covering offline parsing, private storage,
-HTTP deadlines and limits, safe failures, explicit browser selection, proxy TLS,
-and explicit environment credential consumption. CI checks Linux, macOS, and
-Windows on Python 3.11, 3.12, and 3.13. No type checker is configured.
+The offline suite covers parsing, private storage, HTTP deadlines and limits,
+safe failures, explicit browser selection, proxy TLS, environment credential
+consumption, coordinate redaction, and separate shortened stores. One additional
+test launches Chromium only when `EIGHTEENBIRDIES_BROWSER_TEST=1`. CI checks
+Linux, macOS, and Windows on Python 3.11, 3.12, and 3.13, type-checks the
+retrieval modules with mypy, and runs that Chromium download on Ubuntu.
 
 `retrieve` defaults to direct HTTPS with hidden terminal input. Explicit
 `--method cloud-env` supports the fixed environment-variable keys documented in

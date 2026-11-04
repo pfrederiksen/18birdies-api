@@ -11,6 +11,7 @@ python -m unittest discover -s tests -v
 python -m pytest
 ruff check .
 ruff format --check .
+python -m mypy
 python -m build
 python -m twine check dist/*
 ```

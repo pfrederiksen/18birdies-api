@@ -84,8 +84,9 @@ the complete JSON account archive with the existing parser before atomically
 publishing it without replacing any file or symlink. POSIX output uses mode
 0600; Windows inherits account ACLs. The local filesystem must support hard
 links. Retrieved archives include private account categories beyond golf.
-Successful output reports byte count and SHA256 without account data or paths.
-Use `import` explicitly to update a golf store.
+Successful output reports byte count, SHA256, and `"golf_only": false` without
+account data or paths. A stderr line says the file is the full account archive.
+Use `import` explicitly to keep golf data only.
 
 The direct flow reproduces the email/password login and export POSTs observed
 in the official website's public client assets. It is an unofficial integration,
@@ -103,7 +104,9 @@ retried. Existing parser schema/depth/node/round/shot limits apply before saving
 Interrupted or invalid downloads are not published. Handled failures clean the
 temporary file; abrupt process termination can leave a private temporary file.
 Existing directory permissions are unchanged. Do not use a shared/synced folder.
-Retrieval refuses to start when `DEBUG` or `PWDEBUG` is nonempty.
+Retrieval refuses to start when `DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE` is nonempty.
+`SSLKEYLOGFILE` would let a packet capture decrypt the login. The browser
+process does not inherit those variables.
 
 An optional **explicit browser fallback** is also available:
 
@@ -117,6 +120,9 @@ This opens a fresh visible Chromium session at the
 [official export page](https://18birdies.com/download-account-data/).
 Sign in directly there, complete security checks yourself, then select
 **Request My Data**. No browser profile is saved; closing the window cancels.
+The archive is saved only while that page is still `https://18birdies.com/`.
+A download from any other host is refused and is not written. Social sign-in
+may leave the site and return; finish on the official export page.
 Its timeout bounds the interactive download wait; startup and initial navigation
 each have a separate 30-second limit. It accepts the official UTF-8 JSON data-URL
 download only, ignoring the remote filename. Encoded and decoded sizes are
@@ -221,7 +227,19 @@ pretends to be download time. Identical exports keep existing metadata and bytes
 unless a new, explicit actual acquisition time is supplied. Imports that omit
 previously imported round IDs are rejected, preserving the prior store. Normal
 edits to existing rounds and shot entries are accepted. Intentional reduced
-archives should use a separate store.
+archives should use a separate store:
+
+```sh
+18birdies import /private/shorter-export.json --new-store --store /private/shorter.json
+```
+
+`--new-store` fails when that store file already exists, so a shortened archive
+cannot replace the existing history. The default import keeps refusing to drop
+rounds that are already stored.
+
+`--redact-coordinates` replaces shot coordinates with null in command output.
+Scores, distances, and round totals stay. Use it before pasting `summary`,
+`trends`, or `snapshot` from a terminal scrollback.
 
 No scheduled acquisition or ongoing-refresh promise is made. Re-export and
 import when you need newer data. See [security notes](SECURITY.md) before sharing
@@ -235,6 +253,7 @@ python -m unittest discover -s tests -v
 python -m pytest -q
 ruff check .
 ruff format --check .
+python -m mypy
 python -m build
 python -m twine check dist/*
 ```

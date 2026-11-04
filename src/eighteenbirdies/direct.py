@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from typing import Any
 import warnings
 
 from .client import MAX_BYTES
@@ -22,6 +23,24 @@ EXPORT_PATH = "/usercentral/api/user/getMyData"
 AUTH_MAX_BYTES = 64 * 1024
 
 
+def validate_login(account: object, password: object) -> tuple[str, str]:
+    """Accept one email-shaped account and one nonempty password.
+
+    Opaque cloud placeholders do not use this check. Terminal input and
+    cloud-env both do, before any request is sent.
+    """
+    if (
+        not isinstance(account, str)
+        or not isinstance(password, str)
+        or not 3 <= len(account) <= 320
+        or "@" not in account
+        or any(character.isspace() for character in account)
+        or not 1 <= len(password) <= 4096
+    ):
+        raise RetrievalError("An email address and nonempty password are required")
+    return account, password
+
+
 def _remaining(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -29,7 +48,7 @@ def _remaining(deadline: float) -> float:
     return min(30.0, remaining)
 
 
-def _set_timeout(connection, deadline, transport=None):
+def _set_timeout(connection: Any, deadline: float, transport: Any = None) -> None:
     timeout = _remaining(deadline)
     transport = transport if transport is not None else connection.sock
     if transport is not None:
@@ -43,7 +62,7 @@ def _post(
     deadline: float,
     limit: int,
     *,
-    _connection_factory=None,
+    _connection_factory: Any = None,
 ) -> bytes:
     """One TLS POST to the fixed official host. Never follow any redirect."""
     headers = {
@@ -128,24 +147,28 @@ def _credentials() -> tuple[str, str]:
         raise RetrievalError(
             "Secure hidden terminal input unavailable; no request was sent"
         ) from None
-    if (
-        not 3 <= len(account) <= 320
-        or "@" not in account
-        or any(character.isspace() for character in account)
-        or not 1 <= len(password) <= 4096
-    ):
-        raise RetrievalError("An email address and nonempty password are required")
-    return account, password
+    return validate_login(account, password)
 
 
 def retrieve_direct(
-    destination: Path, *, timeout: int = 300, _credential_provider=None, _post_request=None
-) -> dict:
-    """Prompt securely, authenticate once, fetch once, and discard session state."""
+    destination: Path,
+    *,
+    timeout: int = 300,
+    _credential_provider: Any = None,
+    _post_request: Any = None,
+    _validate_login: bool = True,
+) -> dict[str, Any]:
+    """Prompt securely, authenticate once, fetch once, and discard session state.
+
+    `_validate_login` is false only for the offline opaque-placeholder seam.
+    Live terminal and cloud-env retrieval always validate.
+    """
     check_destination(destination, timeout)
     account = password = token = ""
     try:
         account, password = (_credential_provider or _credentials)()
+        if _validate_login:
+            account, password = validate_login(account, password)
         post = _post_request or _post
         # Human input is not counted against the network deadline. Never time out
         # a user halfway through typing a password or expose it to a fallback.
@@ -185,16 +208,17 @@ def retrieve_direct(
             raise RetrievalError(
                 "Security verification required; complete the official account flow"
             )
-        token = document.get("token")
+        received = document.get("token")
         document.clear()
         if (
-            not isinstance(token, str)
-            or not 1 <= len(token) <= 4096
-            or any(not 33 <= ord(character) <= 126 for character in token)
+            not isinstance(received, str)
+            or not 1 <= len(received) <= 4096
+            or any(not 33 <= ord(character) <= 126 for character in received)
         ):
             raise RetrievalError(
                 "No usable token; MFA, CAPTCHA, verification, or another official action may be required"
             )
+        token = received
         archive = post(EXPORT_PATH, {}, token, deadline, MAX_BYTES)
         token = ""
         return save_json(archive, destination)

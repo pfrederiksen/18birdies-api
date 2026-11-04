@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import ssl
 import tempfile
@@ -27,6 +28,9 @@ class CloudTransportTests(unittest.TestCase):
             "NO_PROXY": "*",
         }
         self.connections = []
+        self.environment = patch.dict(os.environ, {"DEBUG": "", "PWDEBUG": "", "SSLKEYLOGFILE": ""})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
 
     def factory(self, host, port, **options):
         connection = MagicMock()
@@ -52,7 +56,8 @@ class CloudTransportTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             result = self.run_synthetic()
         self.assertEqual(output.getvalue() + errors.getvalue(), "")
-        self.assertEqual(set(result), {"source", "bytes", "sha256"})
+        self.assertEqual(set(result), {"source", "bytes", "sha256", "golf_only"})
+        self.assertIs(result["golf_only"], False)
         self.assertEqual(self.output.read_bytes(), SAMPLE.read_bytes())
         first, second = self.connections
         for connection in self.connections:
@@ -222,6 +227,9 @@ class EnvironmentCredentialTests(unittest.TestCase):
             cloud.EMAIL_KEY: "NETWORK-PLACEHOLDER-MUST-NOT-BE-USED",
             cloud.PASSWORD_KEY: "NETWORK-PASSWORD-MUST-NOT-BE-USED",
         }
+        self.environment = patch.dict(os.environ, {"DEBUG": "", "PWDEBUG": "", "SSLKEYLOGFILE": ""})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
 
     def run_environment(self, factory=None):
         return cloud.retrieve_environment(
@@ -247,7 +255,8 @@ class EnvironmentCredentialTests(unittest.TestCase):
         payload = json.loads(self.connections[0].request.call_args.kwargs["body"])
         self.assertEqual(payload, {"account": expected[0], "password": expected[1]})
         self.assertEqual(self.output.read_bytes(), SAMPLE.read_bytes())
-        self.assertEqual(set(result), {"source", "bytes", "sha256"})
+        self.assertEqual(set(result), {"source", "bytes", "sha256", "golf_only"})
+        self.assertIs(result["golf_only"], False)
         for value in expected:
             self.assertNotIn(value, json.dumps(result))
             self.assertNotIn(value.encode(), self.output.read_bytes())
@@ -274,6 +283,16 @@ class EnvironmentCredentialTests(unittest.TestCase):
             self.assert_consumed()
         self.assertEqual(self.connections, [])
 
+    def test_malformed_email_is_not_sent(self):
+        for account in ("not-an-email", "a b@example.invalid", "x"):
+            self.values[cloud.ENV_EMAIL_KEY] = account
+            self.values[cloud.ENV_PASSWORD_KEY] = "invented-password"
+            with self.assertRaises(RetrievalError) as caught:
+                self.run_environment()
+            self.assertNotIn(account, str(caught.exception))
+            self.assert_consumed()
+        self.assertEqual(self.connections, [])
+
     def test_proxy_tls_errors_are_redacted_and_inputs_consumed(self):
         secret = self.values[cloud.ENV_PASSWORD_KEY]
         with patch.object(cloud.ssl, "create_default_context", side_effect=OSError(secret)):
@@ -289,7 +308,8 @@ class EnvironmentCredentialTests(unittest.TestCase):
         with patch.object(
             cloud, "retrieve_environment", return_value={"source": "synthetic"}
         ) as raw:
-            with contextlib.redirect_stdout(io.StringIO()):
+            errors = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
                 self.assertEqual(
                     client.main(
                         ["retrieve", "--method", "cloud-env", "--output", str(self.output)]
@@ -297,6 +317,7 @@ class EnvironmentCredentialTests(unittest.TestCase):
                     0,
                 )
             raw.assert_called_once_with(self.output, timeout=300)
+            self.assertIn("full account archive", errors.getvalue())
         with patch.object(cloud, "retrieve_environment") as raw:
             with self.assertRaises(RetrievalError):
                 retrieval.retrieve(self.output, method="cloud")

@@ -34,7 +34,10 @@ The adapter uses HTTPS CONNECT through the configured plain HTTP proxy, with a
 fixed official host and port. Proxy URLs containing credentials, custom paths,
 or query strings are rejected. It never consults `NO_PROXY` or falls back to a
 direct connection. TLS certificate and hostname verification are required;
-standard system trust and `SSL_CERT_FILE`/`SSL_CERT_DIR` apply.
+standard system trust and `SSL_CERT_FILE`/`SSL_CERT_DIR` apply. A principal who
+can set the proxy and one of those trusted CAs can read the email, password,
+token, and archive. Environment values use the same email and password checks
+as hidden terminal input.
 
 Login and export each get one attempt under a shared deadline. Redirects, access
 denials, known security challenges, unsupported responses, and invalid archives

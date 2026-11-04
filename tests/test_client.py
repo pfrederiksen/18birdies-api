@@ -289,6 +289,66 @@ class ClientTests(unittest.TestCase):
             api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
         self.assertEqual(self.store.read_bytes(), old)
 
+    def test_shortened_archive_requires_a_separate_store(self):
+        api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        original = self.store.read_bytes()
+        self.data["myData"]["activityData"]["rounds"].pop()
+        self.data["myData"]["activityData"]["roundCount"] = 1
+        self.write()
+        with self.assertRaises(api.ReducedArchiveError):
+            api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(self.store.read_bytes(), original)
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error):
+            code = api.main(["--store", str(self.store), "import", str(self.path)])
+        self.assertEqual(code, 2)
+        self.assertIn("--new-store", error.getvalue())
+        self.assertNotIn(str(self.store), error.getvalue())
+        self.assertNotIn(str(self.path), error.getvalue())
+        separate = self.store.with_name("shorter.json")
+        shortened = api.EighteenBirdiesClient.import_export(
+            self.path, store_path=separate, new_store=True
+        )
+        self.assertEqual(len(shortened.list_rounds()), 1)
+        self.assertEqual(self.store.read_bytes(), original)
+        with self.assertRaises(api.EighteenBirdiesError):
+            api.EighteenBirdiesClient.import_export(self.path, store_path=separate, new_store=True)
+        self.assertEqual(len(api.EighteenBirdiesClient(store_path=separate).list_rounds()), 1)
+
+    def test_redact_coordinates_keeps_scores_and_nulls_points(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--redact-coordinates", "snapshot"]), 0
+            )
+        redacted = json.loads(output.getvalue())
+        shots = [shot for round_ in redacted["rounds"] for shot in round_["shots"]]
+        self.assertTrue(shots)
+        self.assertTrue(
+            all(shot["start_point"] is None and shot["end_point"] is None for shot in shots)
+        )
+        self.assertEqual(redacted["summary"]["rounds"], 2)
+        self.assertNotIn("latitude", output.getvalue())
+        located = [
+            shot["start_point"]
+            for round_ in self.client().snapshot()["rounds"]
+            for shot in round_["shots"]
+            if shot["start_point"]
+        ]
+        self.assertEqual(located[0]["latitude"], 0)
+        summary = io.StringIO()
+        with contextlib.redirect_stdout(summary):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--redact-coordinates", "summary"]), 0
+            )
+        self.assertEqual(json.loads(summary.getvalue())["rounds"], 2)
+        trends = io.StringIO()
+        with contextlib.redirect_stdout(trends):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--redact-coordinates", "trends"]), 0
+            )
+        self.assertEqual(json.loads(trends.getvalue())[0]["rounds"], 2)
+
     def test_entire_approved_subtrees_preserved_including_future_fields(self):
         raw = self.data["myData"]["activityData"]["rounds"][0]
         raw["future_round_field"] = {"preserve": [None, 0, False, "future"]}

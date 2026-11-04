@@ -4,10 +4,14 @@ Explicit `retrieve --method cloud-env` consumes the two fixed Personal Vault
 environment-variable inputs documented in `docs/CLOUD_PREPARATION.md`. Actual
 values are available to task code. It removes the input keys from its own
 environment before connecting, starts no subprocess, and sends JSON only to the
-fixed official host over a required proxy with verified TLS. Values and tokens
-remain in memory and are excluded from diagnostics. Parent-process environments
-and process memory cannot be reliably erased by this Python process. Other modes
-never fall back to these values. The network-secret mode remains blocked.
+fixed official host over a required proxy with verified TLS. Whoever can set
+that proxy and a CA this process trusts, including a CA loaded from
+`SSL_CERT_FILE` or `SSL_CERT_DIR`, can read the email, password, token, and
+archive. Hostname verification does not stop that principal. Direct retrieval
+uses the same default trust store. Values and tokens remain in memory and are
+excluded from diagnostics. Parent-process environments and process memory cannot
+be reliably erased by this Python process. Other modes never fall back to these
+values. The network-secret mode remains blocked.
 
 This project processes golf exports locally. Offline commands make no network
 requests or telemetry calls. Explicit `retrieve` uses the official HTTPS
@@ -18,7 +22,12 @@ Security challenges and denials stop direct retrieval. An explicitly selected
 `--method browser` fallback opens a fresh visible browser for user authentication.
 No persistent browser profile is created. Retrieved archives contain the complete
 account data. Files are not encrypted; Python cannot guarantee memory erasure.
-Do not enable debugging/tracing or terminal recording while entering credentials.
+Do not enable debugging, tracing, or terminal recording while entering
+credentials. Retrieval refuses to start when `DEBUG`, `PWDEBUG`, or
+`SSLKEYLOGFILE` is nonempty, and the browser process does not inherit them.
+The browser fallback saves an archive only while the page is still
+`https://18birdies.com/`. `--redact-coordinates` removes shot coordinates from
+JSON output; the store and the full archive still contain them.
 
 An account export may contain profile details, messages, contacts, identifiers,
 and precise shot locations. Keep the original export outside your repository.

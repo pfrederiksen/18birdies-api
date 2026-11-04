@@ -27,7 +27,9 @@ class DirectTests(unittest.TestCase):
         self.output = Path(self.directory.name) / "new.json"
         self.guard = contextlib.ExitStack()
         self.addCleanup(self.guard.close)
-        self.guard.enter_context(patch.dict(os.environ, {"DEBUG": "", "PWDEBUG": ""}))
+        self.guard.enter_context(
+            patch.dict(os.environ, {"DEBUG": "", "PWDEBUG": "", "SSLKEYLOGFILE": ""})
+        )
 
     def test_default_cli_protocol_and_parse_same_file(self):
         with patch.object(d, "_credentials", return_value=(ACCOUNT, PASSWORD)):
@@ -47,6 +49,8 @@ class DirectTests(unittest.TestCase):
         self.assertEqual(second.args[4], client.MAX_BYTES)
         for secret in (ACCOUNT, PASSWORD, TOKEN):
             self.assertNotIn(secret, output.getvalue() + errors.getvalue())
+        self.assertIn("full account archive", errors.getvalue())
+        self.assertIn('"golf_only": false', output.getvalue())
         self.assertEqual(self.output.read_bytes(), SAMPLE.read_bytes())
         self.assertEqual(
             client.EighteenBirdiesClient.from_export(self.output).summary()["rounds"], 1

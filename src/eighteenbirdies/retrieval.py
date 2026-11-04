@@ -5,12 +5,17 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from urllib.parse import unquote_to_bytes
+from typing import Any, cast
+from urllib.parse import unquote_to_bytes, urlsplit
 
 from .client import EighteenBirdiesClient, EighteenBirdiesError, MAX_BYTES
 
 EXPORT_URL = "https://18birdies.com/download-account-data/"
 PREFIX = "data:text/plain;charset=utf-8,"
+BLOCKED_ENV = ("DEBUG", "PWDEBUG", "SSLKEYLOGFILE")
+ARCHIVE_NOTICE = (
+    "Saved the full account archive, not a golf-only store. Run import to keep golf data only."
+)
 
 
 class RetrievalError(EighteenBirdiesError):
@@ -55,13 +60,20 @@ def save_json(data: bytes, destination: Path) -> dict:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return {"source": "18birdies", "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    return {
+        "source": "18birdies",
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "golf_only": False,
+    }
 
 
 def check_destination(destination: Path, timeout: int) -> None:
     """Reject invalid options before credentials or network access."""
-    if os.environ.get("DEBUG") or os.environ.get("PWDEBUG"):
-        raise RetrievalError("Unset DEBUG and PWDEBUG before retrieving private account data")
+    if any(os.environ.get(name) for name in BLOCKED_ENV):
+        raise RetrievalError(
+            "Unset DEBUG, PWDEBUG, and SSLKEYLOGFILE before retrieving private account data"
+        )
     if not 30 <= timeout <= 900:
         raise RetrievalError("Timeout must be between 30 and 900 seconds")
     if not destination.parent.is_dir():
@@ -70,7 +82,37 @@ def check_destination(destination: Path, timeout: int) -> None:
         raise RetrievalError("Output already exists; choose a new output filename")
 
 
-def retrieve_browser(destination: Path, *, timeout: int = 300) -> dict:
+def _official_page(url: object) -> bool:
+    """True when the visible page is still the official HTTPS host."""
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and parts.hostname == "18birdies.com"
+        and parts.username is None
+        and parts.password is None
+    )
+
+
+def _browser_env() -> dict[str, str | float | bool]:
+    """Pass the process environment without debug or TLS-key logging."""
+    exported = cast(dict[str, str | float | bool], os.environ.copy())
+    for name in BLOCKED_ENV:
+        exported.pop(name, None)
+    return exported
+
+
+def retrieve_browser(
+    destination: Path,
+    *,
+    timeout: int = 300,
+    _headless: bool = False,
+    _prepare_context: Any = None,
+) -> dict[str, Any]:
     """Open a fresh browser. The user performs all authentication and requests."""
     check_destination(destination, timeout)
     try:
@@ -87,15 +129,26 @@ def retrieve_browser(destination: Path, *, timeout: int = 300) -> dict:
     )
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=False, timeout=30000)
+            browser = playwright.chromium.launch(
+                headless=_headless, timeout=30000, env=_browser_env()
+            )
             try:
                 context = browser.new_context(accept_downloads=False)
+                if _prepare_context is not None:
+                    _prepare_context(context)
                 page = context.new_page()
                 page.set_default_navigation_timeout(30000)
                 # Arm before navigation so even a fast user-triggered download is caught.
                 with page.expect_download(timeout=timeout * 1000) as pending:
                     page.goto(EXPORT_URL, wait_until="domcontentloaded")
-                return save_download(pending.value.url, destination)
+                download = pending.value
+                # Social sign-in may leave and return. The archive is accepted only
+                # while the page is back on the official host.
+                if not _official_page(page.url):
+                    raise RetrievalError(
+                        "Download refused because the browser left the official site"
+                    )
+                return save_download(download.url, destination)
             finally:
                 browser.close()
     except KeyboardInterrupt:

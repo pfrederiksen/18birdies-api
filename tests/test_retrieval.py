@@ -23,6 +23,9 @@ class RetrievalTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.output = Path(self.directory.name) / "archive.json"
         self.url = r.PREFIX + quote_from_bytes(SAMPLE.read_bytes())
+        self.environment = patch.dict(os.environ, {"DEBUG": "", "PWDEBUG": "", "SSLKEYLOGFILE": ""})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
 
     def test_valid_json_preserved_and_parseable(self):
         result = r.save_download(self.url, self.output)
@@ -78,6 +81,7 @@ class RetrievalTests(unittest.TestCase):
         manager = MagicMock()
         browser = manager.return_value.__enter__.return_value.chromium.launch.return_value
         page = browser.new_context.return_value.new_page.return_value
+        page.url = r.EXPORT_URL
         page.expect_download.return_value.__enter__.return_value.value.url = self.url
         module = SimpleNamespace(
             sync_playwright=manager, Error=RuntimeError, TimeoutError=TimeoutError
@@ -87,10 +91,8 @@ class RetrievalTests(unittest.TestCase):
     def test_browser_flow_and_cli(self):
         manager, browser, page, module = self.browser()
         with patch.dict(sys.modules, {"playwright.sync_api": module}):
-            with (
-                contextlib.redirect_stdout(io.StringIO()),
-                contextlib.redirect_stderr(io.StringIO()),
-            ):
+            errors = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
                 self.assertEqual(
                     client.main(["retrieve", "--method", "browser", "--output", str(self.output)]),
                     0,
@@ -99,7 +101,11 @@ class RetrievalTests(unittest.TestCase):
         page.expect_download.assert_called_once_with(timeout=300000)
         browser.new_context.assert_called_once_with(accept_downloads=False)
         browser.close.assert_called_once()
+        launch = manager.return_value.__enter__.return_value.chromium.launch
+        self.assertNotIn("SSLKEYLOGFILE", launch.call_args.kwargs["env"])
+        self.assertNotIn("DEBUG", launch.call_args.kwargs["env"])
         self.assertTrue(self.output.exists())
+        self.assertIn("full account archive", errors.getvalue())
 
     def test_timeout_and_browser_failure_hide_payload_and_close(self):
         for error in (TimeoutError("SECRET"), RuntimeError("SECRET")):
@@ -174,9 +180,31 @@ class RetrievalTests(unittest.TestCase):
 
     def test_debug_environment_rejected_before_browser_launch(self):
         manager, _, _, module = self.browser()
-        for name in ("DEBUG", "PWDEBUG"):
-            with patch.dict(os.environ, {name: "1"}):
+        for name in ("DEBUG", "PWDEBUG", "SSLKEYLOGFILE"):
+            with patch.dict(os.environ, {name: "/tmp/SECRET-keylog"}):
                 with patch.dict(sys.modules, {"playwright.sync_api": module}):
-                    with self.assertRaisesRegex(r.RetrievalError, "Unset DEBUG"):
+                    with self.assertRaises(r.RetrievalError) as caught:
                         r.retrieve_browser(self.output)
+            self.assertIn("Unset DEBUG", str(caught.exception))
+            self.assertNotIn("SECRET", str(caught.exception))
         manager.assert_not_called()
+
+    def test_download_off_official_site_is_refused_without_echoing_the_url(self):
+        for url in (
+            "https://evil.example/phish?SECRET",
+            "https://18birdies.com.evil.example/download-account-data/",
+            "https://user:SECRET@18birdies.com/download-account-data/",
+            "http://18birdies.com/download-account-data/",
+        ):
+            with self.subTest(url=url):
+                _, browser, page, module = self.browser()
+                page.url = url
+                with patch.dict(sys.modules, {"playwright.sync_api": module}):
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        with self.assertRaises(r.RetrievalError) as caught:
+                            r.retrieve_browser(self.output)
+                self.assertIn("official site", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
+                self.assertNotIn("evil.example", str(caught.exception))
+                browser.close.assert_called_once()
+                self.assertFalse(self.output.exists())

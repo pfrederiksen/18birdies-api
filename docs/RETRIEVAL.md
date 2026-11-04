@@ -26,7 +26,9 @@ succeeds in an interactive terminal. Explicit cloud-env input is documented in
 No terminal echo fallback is permitted. Tests use invented accounts and tokens.
 
 Direct HTTP uses the standard library's verified TLS connection, a fixed host
-and fixed paths, and disables HTTP debug output. Login and export each get one
+and fixed paths, and disables HTTP debug output. Nonempty `DEBUG`, `PWDEBUG`,
+or `SSLKEYLOGFILE` stops retrieval before a prompt or a connection, because
+`SSLKEYLOGFILE` records TLS secrets that decrypt the login. Login and export each get one
 attempt. The default terminal mode does not use proxies; cloud-env requires a verified
 proxy transport. Redirects are never followed; there is no credential/token
 refresh, cookie jar, or authentication cache. Status 401, 403, 429, redirects,
@@ -58,4 +60,8 @@ A separately authorized cloud-env integration test successfully retrieved and
 parsed an official archive through the configured proxy. No real account data
 or credentials are included here. Tests use invented data and mocked HTTP/browser
 responses; a real Chromium synthetic data-URL download also validated the
-optional browser path. Service behavior can change independently of this package.
+optional browser path. That path saves a download only while the page URL is
+still `https://18birdies.com/`, and its Chromium process does not inherit
+`DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE`. Service behavior can change independently of this package.
+Successful retrieval reports `"golf_only": false` because the saved file is the
+full account archive.

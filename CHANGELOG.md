@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+- Added browser-free email/password retrieval, an explicit visible-browser
+  fallback, and an explicit `cloud-env` proxy mode. `retrieve --method cloud`
+  still stops before secrets or network access.
+- Refused nonempty `DEBUG`, `PWDEBUG`, and `SSLKEYLOGFILE` before retrieval.
+  The browser process does not inherit those variables, and a download is saved
+  only while the page remains on `https://18birdies.com/`.
+- Applied one email and password check to terminal input and `cloud-env`.
+- Reported `"golf_only": false` for a retrieved archive and stated on stderr
+  that the file is the full account export.
+- Added `--redact-coordinates` and `import --new-store` for a shortened archive
+  in a separate store.
+- Added CodeQL, pip Dependabot, Ruff security checks, a mypy check of the
+  retrieval modules, and an optional Chromium data-URL job.
+
 ## 0.1.0
 
 - Introduced an offline SDK and JSON CLI for official account exports.
