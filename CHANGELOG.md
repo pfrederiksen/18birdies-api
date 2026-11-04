@@ -16,6 +16,8 @@
 - Type-checked the client, report coverage from pytest, and check Python 3.14.
   Ruff now includes bugbear and pyupgrade. A weekly job checks that the public
   export page still names the login and archive paths.
+- Reached POSIX file-mode and directory sync calls through `getattr` so mypy
+  passes on Windows, where those attributes are absent.
 
 ## 0.2.0
 

@@ -664,14 +664,17 @@ def _atomic_write(path: Path, data: dict) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".18birdies-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as handle:
-            if os.name != "nt":
-                os.fchmod(handle.fileno(), 0o600)
+            # Windows stubs omit these POSIX calls. getattr keeps mypy honest there.
+            fchmod = getattr(os, "fchmod", None)
+            if fchmod is not None:
+                fchmod(handle.fileno(), 0o600)
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if isinstance(directory_flag, int):
+            directory = os.open(path.parent, os.O_RDONLY | directory_flag)
             try:
                 os.fsync(directory)
             finally:
