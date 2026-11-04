@@ -814,7 +814,7 @@ class EighteenBirdiesClient:
                     if not prior_ids <= next_ids:
                         raise ReducedArchiveError(
                             "Export omits previously imported rounds; prior store preserved. "
-                            "Use import --new-store --store PATH for a shortened archive."
+                            "Use --store PATH import EXPORT --new-store for a shortened archive."
                         )
             candidate = cls.__new__(cls)
             candidate._initialize(envelope, timezone_name)
@@ -1117,7 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "18Birdies export error: this export omits rounds already in the store. "
                 "The existing store was not changed. "
-                "Use import --new-store --store PATH for a shortened archive.",
+                "Use --store PATH import EXPORT --new-store for a shortened archive.",
                 file=sys.stderr,
             )
             return 2

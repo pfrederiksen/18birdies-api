@@ -111,7 +111,8 @@ disagreements. Scoring strokes and exported shots are separate counts.
 counts and latest-round diagnostics.
 
 The CLI flag `--redact-coordinates` replaces `latitude`, `longitude`,
-`start_point`, and `end_point` with null in that command's JSON. Scores and
+`start_point`, `end_point`, `startPoint`, and `endPoint` with null in that
+command's JSON. It is global and comes before the subcommand. Scores and
 distances remain. The stored subtree is unchanged.
 
 `snapshot()` returns `source`, `date_timezone`, `last_fetched`, `imported_at`,
@@ -156,10 +157,10 @@ Identical hashes do not
 rewrite bytes or advance freshness. Explicit later actual acquisition times
 can update acquisition metadata; backwards times for identical hashes fail.
 New snapshots omitting existing round IDs fail rather than erasing history.
-Pass `new_store=True` (CLI: `import --new-store --store PATH`) to write a
-shortened archive to a different file. That call fails if the destination
-already exists, including as a symlink, and it does not modify the original
-store. Edits/deleted shot entries inside existing rounds are accepted. The previous
+Pass `new_store=True` (CLI: `--store PATH import EXPORT --new-store`) to write a
+shortened archive to a different file. `--store` is global and comes before
+`import`. That call fails if the destination already exists, including as a
+symlink, and it does not modify the original store. Edits/deleted shot entries inside existing rounds are accepted. The previous
 store survives validation/write/replacement errors. An existing corrupt store
 is not silently overwritten. Use a separate store for intentional reduced
 archives; no deletion override is currently provided.

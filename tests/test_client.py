@@ -302,7 +302,7 @@ class ClientTests(unittest.TestCase):
         with contextlib.redirect_stderr(error):
             code = api.main(["--store", str(self.store), "import", str(self.path)])
         self.assertEqual(code, 2)
-        self.assertIn("--new-store", error.getvalue())
+        self.assertIn("--store PATH import EXPORT --new-store", error.getvalue())
         self.assertNotIn(str(self.store), error.getvalue())
         self.assertNotIn(str(self.path), error.getvalue())
         separate = self.store.with_name("shorter.json")

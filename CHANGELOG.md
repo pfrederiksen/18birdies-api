@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Documented that global `--store` comes before `import --new-store`. The
+  shortened-archive error now shows `--store PATH import EXPORT --new-store`.
+
 ## 0.2.0
 
 - Added browser-free email/password retrieval, an explicit visible-browser

@@ -57,9 +57,11 @@ To create a local golf-only store:
 On Windows, use a normal quoted Windows path for your export. The default store
 is `$XDG_DATA_HOME/eighteenbirdies/export.json` when that variable is absolute,
 otherwise `~/.local/share/eighteenbirdies/export.json`. It never writes into the
-installed package. Global `--store PATH` chooses another location. Global
-`--export PATH` reads an export directly. Output is always JSON; `--json` is
-accepted for clarity. Errors exit 2 without echoing private input.
+installed package. Global `--store`, `--export`, `--timezone`, and
+`--redact-coordinates` choose the location, source, dates, and coordinate
+redaction. Those options come before the subcommand. Output is always JSON;
+`--json` is accepted for clarity and may follow the subcommand. Errors exit 2
+without echoing private input.
 
 ## Retrieve Your Archive
 
@@ -230,16 +232,19 @@ edits to existing rounds and shot entries are accepted. Intentional reduced
 archives should use a separate store:
 
 ```sh
-18birdies import /private/shorter-export.json --new-store --store /private/shorter.json
+18birdies --store /private/shorter.json import /private/shorter-export.json --new-store
 ```
 
-`--new-store` fails when that store file already exists, so a shortened archive
-cannot replace the existing history. The default import keeps refusing to drop
-rounds that are already stored.
+`--store` is global, so it comes before `import`. `--new-store` fails when that
+store file already exists, so a shortened archive cannot replace the existing
+history. The default import keeps refusing to drop rounds that are already
+stored.
 
-`--redact-coordinates` replaces shot coordinates with null in command output.
-Scores, distances, and round totals stay. Use it before pasting `summary`,
-`trends`, or `snapshot` from a terminal scrollback.
+`--redact-coordinates` comes before the subcommand. It replaces `latitude`,
+`longitude`, `start_point`, `end_point`, `startPoint`, and `endPoint` with null
+in that command's JSON. Scores, distances, and round totals stay. The store and
+the saved archive are unchanged. Use it before pasting `summary`, `trends`, or
+`snapshot` from a terminal scrollback.
 
 No scheduled acquisition or ongoing-refresh promise is made. Re-export and
 import when you need newer data. See [security notes](SECURITY.md) before sharing
