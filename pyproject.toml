@@ -28,7 +28,7 @@ dependencies = []
 
 [project.optional-dependencies]
 retrieve = ["playwright>=1.48,<2"]
-dev = ["build>=1.2", "mypy>=1.14", "packaging>=24.2", "pytest>=8", "ruff==0.17.1", "twine>=6.1"]
+dev = ["build>=1.2", "mypy>=1.14", "packaging>=24.2", "pytest>=8", "ruff==0.17.3", "twine>=6.1"]
 timezones = ["tzdata>=2024.1"]
 
 [project.urls]
