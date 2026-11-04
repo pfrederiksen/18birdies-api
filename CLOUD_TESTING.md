@@ -28,8 +28,9 @@ shortened stores. One additional
 test launches Chromium only when `EIGHTEENBIRDIES_BROWSER_TEST=1`. CI checks
 Linux, macOS, and Windows on Python 3.11, 3.12, 3.13, and 3.14, type-checks the
 client and retrieval modules with mypy, reports coverage, and runs that
-Chromium download on Ubuntu. A separate weekly workflow fetches the public
-export page and fails if `userLogin` or `getMyData` is no longer named.
+Chromium download on Ubuntu. A separate weekly workflow fetches the public export page, its same-host
+scripts, and the `/_astro` chunks those scripts import. It fails if
+`userLogin` or `getMyData` is no longer named.
 
 `retrieve` defaults to direct HTTPS with hidden terminal input. Explicit
 `--method cloud-env` supports the fixed environment-variable keys documented in

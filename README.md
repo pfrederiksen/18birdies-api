@@ -64,8 +64,10 @@ installed package. Global `--store`, `--export`, `--timezone`,
 dates, and redaction. Those options come before the subcommand. Output is always
 JSON; `--json` is accepted for clarity and may follow the subcommand. Errors
 exit 2 without echoing private input. A missing round says `round not found`,
-invalid JSON says `export is not valid JSON`, and a failed store write says
-`store path is not writable`.
+invalid JSON says `export is not valid JSON`, an unreadable file says
+`cannot read the export or store`, and a failed store write says
+`store path is not writable`. The [API reference](docs/API.md) lists the other
+fixed messages.
 
 Round selection also comes before the subcommand and applies to `list`,
 `summary`, `trends`, `courses`, `clubs`, `coverage`, `handicap`, and `snapshot`:
@@ -76,13 +78,24 @@ Round selection also comes before the subcommand and applies to `list`,
 18birdies --last 20 clubs --minimum-yards 100 --json
 ```
 
-`--since` and `--until` are inclusive calendar dates in the selected timezone.
-A round with no date is left out of a date window. `--course` accepts the
-namespaced id or the source id. `--holes` matches `holes_scored`, so 9-hole and
-18-hole rounds stay separate. `--last` keeps that many newest matches.
-`--minimum-yards` applies only to `clubs` and `snapshot`. It drops shorter
-recorded distances from the average, median, and percentiles. The shot count
-stays, and partial shots are still not classified.
+`--since` and `--until` are inclusive `YYYY-MM-DD` dates in the selected
+timezone, and since must fall on or before until. A round with no date is left
+out of a date window. `--course` accepts the namespaced id or the source id. An
+unknown course id returns no rounds. `--holes` matches `holes_scored` from 0
+through 18, so 9-hole and 18-hole rounds stay separate. `--last` keeps that
+many newest matches. On `list`, `--limit` truncates after those filters.
+`--minimum-yards` applies only to `clubs` and `snapshot` and must be a positive
+number up to 10000. It drops shorter recorded distances from the average,
+median, and percentiles. The shot count stays, and partial shots are still not
+classified.
+
+`trends` JSON is an object with `months`, `last_10`, and `last_20`. Each month
+and each recent window uses the same summary as `summary`. Round scoring counts
+are under `stats.scoring`. Fairway and green miss counts are under
+`stats.fairway_directions` and `stats.gir_directions`. Course JSON adds
+`hole_strokes`, with `number`, `rounds`, `average_strokes`, and
+`times_highest_score` for each scored hole. `handicap` JSON is
+`{source, ghin, rounds}` and `ghin` is false.
 
 ## Retrieve Your Archive
 
@@ -181,10 +194,12 @@ for round_ in client.rounds.list(limit=5):
 round_ = client.rounds.get("18birdies:round:demo-round-01")
 shots = round_["holes"][0]["shots"]
 summary = client.stats.summary()
-trends = client.stats.trends()
+trends = client.stats.trends()  # {"months", "last_10", "last_20"}
 courses = client.courses.list()
-distances = client.club_distances()
+distances = client.club_distances(minimum_yards=None)
 coverage = client.coverage()
+handicap = client.handicap_series()
+recent = client.select_rounds(since="2026-01-01", holes=18, last=20)
 ```
 
 Import explicitly when persistence is useful:
@@ -289,6 +304,7 @@ python -m twine check dist/*
 Tests use synthetic data only. CI tests three operating systems and Python
 3.11 through 3.14, reports coverage, type-checks the client and retrieval
 modules, then validates the wheel/source archive and CLI. It does not publish
-packages. A weekly job reads the public export page, with no credentials, and
-fails if the login or archive path disappears. See [contributing](CONTRIBUTING.md),
+packages. A weekly job reads the public export page and the same-host scripts
+it links, with no credentials, and fails if the login or archive path
+disappears. See [contributing](CONTRIBUTING.md),
 [changelog](CHANGELOG.md), and the [MIT license](LICENSE).
