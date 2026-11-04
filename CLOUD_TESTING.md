@@ -10,8 +10,7 @@ account or browser is needed for the offline suite.
 python -m venv .venv
 # Activate the virtual environment for your operating system.
 python -m pip install -e '.[dev,timezones]'
-python -m unittest discover -s tests -v
-python -m pytest -q
+python -m pytest -q --cov=eighteenbirdies --cov-report=term-missing --cov-fail-under=90
 ruff check .
 ruff format --check .
 python -m mypy
@@ -24,10 +23,14 @@ python -m eighteenbirdies --export examples/synthetic-export.json capabilities -
 
 The offline suite covers parsing, private storage, HTTP deadlines and limits,
 safe failures, explicit browser selection, proxy TLS, environment credential
-consumption, coordinate redaction, and separate shortened stores. One additional
+consumption, coordinate and identity redaction, round filters, and separate
+shortened stores. One additional
 test launches Chromium only when `EIGHTEENBIRDIES_BROWSER_TEST=1`. CI checks
-Linux, macOS, and Windows on Python 3.11, 3.12, and 3.13, type-checks the
-retrieval modules with mypy, and runs that Chromium download on Ubuntu.
+Linux, macOS, and Windows on Python 3.11, 3.12, 3.13, and 3.14, type-checks the
+client and retrieval modules with mypy, reports coverage, and runs that
+Chromium download on Ubuntu. A separate weekly workflow fetches the public export page, its same-host
+scripts, and the `/_astro` chunks those scripts import. It fails if
+`userLogin` or `getMyData` is no longer named.
 
 `retrieve` defaults to direct HTTPS with hidden terminal input. Explicit
 `--method cloud-env` supports the fixed environment-variable keys documented in

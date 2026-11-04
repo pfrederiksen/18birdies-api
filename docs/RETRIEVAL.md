@@ -62,6 +62,11 @@ or credentials are included here. Tests use invented data and mocked HTTP/browse
 responses; a real Chromium synthetic data-URL download also validated the
 optional browser path. That path saves a download only while the page URL is
 still `https://18birdies.com/`, and its Chromium process does not inherit
-`DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE`. Service behavior can change independently of this package.
+`DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE`. Service behavior can change independently of this package. A weekly workflow
+fetches this public page, same-host `.js` URLs in that HTML (including Astro
+`component-url` values), and their `./file.js` and `/_astro/file.js` imports.
+It sends no credentials. It fails if `userLogin` or `getMyData` is no longer
+named. Bare `_astro/file.js` strings are ignored because they do not resolve
+from a script that already lives in `/_astro`.
 Successful retrieval reports `"golf_only": false` because the saved file is the
 full account archive.
