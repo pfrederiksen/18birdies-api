@@ -66,7 +66,7 @@ class DirectTests(unittest.TestCase):
                     self.assertEqual(prompt.call_count, 2)
 
                 def insecure(*args, **kwargs):
-                    warnings.warn("SECRET", getpass.GetPassWarning)
+                    warnings.warn("SECRET", getpass.GetPassWarning, stacklevel=2)
 
                 with patch.object(d.getpass, "getpass", side_effect=insecure):
                     with self.assertRaisesRegex(RetrievalError, "Secure hidden"):

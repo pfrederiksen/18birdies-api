@@ -62,6 +62,8 @@ or credentials are included here. Tests use invented data and mocked HTTP/browse
 responses; a real Chromium synthetic data-URL download also validated the
 optional browser path. That path saves a download only while the page URL is
 still `https://18birdies.com/`, and its Chromium process does not inherit
-`DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE`. Service behavior can change independently of this package.
+`DEBUG`, `PWDEBUG`, or `SSLKEYLOGFILE`. Service behavior can change independently of this package. A weekly workflow
+fetches this public page and its same-host scripts, with no credentials, and
+fails if `userLogin` or `getMyData` is no longer named.
 Successful retrieval reports `"golf_only": false` because the saved file is the
 full account archive.

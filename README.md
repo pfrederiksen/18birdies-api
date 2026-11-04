@@ -30,7 +30,7 @@ python -m pip install .
 
 The included export is entirely invented. No account or network access is
 required to try it. The core has **zero third-party runtime dependencies**.
-Windows, macOS, and Linux have a Python 3.11/3.12/3.13 CI matrix.
+Windows, macOS, and Linux have a Python 3.11/3.12/3.13/3.14 CI matrix.
 
 To work with your own data, obtain the JSON through the official 18Birdies
 account-data download flow and keep the original outside this repository. A
@@ -50,6 +50,8 @@ To create a local golf-only store:
 18birdies trends --json
 18birdies courses --json
 18birdies clubs --json
+18birdies coverage --json
+18birdies handicap --json
 18birdies capabilities --json
 18birdies snapshot --json
 ```
@@ -57,11 +59,30 @@ To create a local golf-only store:
 On Windows, use a normal quoted Windows path for your export. The default store
 is `$XDG_DATA_HOME/eighteenbirdies/export.json` when that variable is absolute,
 otherwise `~/.local/share/eighteenbirdies/export.json`. It never writes into the
-installed package. Global `--store`, `--export`, `--timezone`, and
-`--redact-coordinates` choose the location, source, dates, and coordinate
-redaction. Those options come before the subcommand. Output is always JSON;
-`--json` is accepted for clarity and may follow the subcommand. Errors exit 2
-without echoing private input.
+installed package. Global `--store`, `--export`, `--timezone`,
+`--redact-coordinates`, and `--redact-identity` choose the location, source,
+dates, and redaction. Those options come before the subcommand. Output is always
+JSON; `--json` is accepted for clarity and may follow the subcommand. Errors
+exit 2 without echoing private input. A missing round says `round not found`,
+invalid JSON says `export is not valid JSON`, and a failed store write says
+`store path is not writable`.
+
+Round selection also comes before the subcommand and applies to `list`,
+`summary`, `trends`, `courses`, `clubs`, `coverage`, `handicap`, and `snapshot`:
+
+```sh
+18birdies --timezone America/Los_Angeles --since 2025-01-01 --until 2025-12-31 summary --json
+18birdies --course 18birdies:course:COURSE_ID --holes 18 trends --json
+18birdies --last 20 clubs --minimum-yards 100 --json
+```
+
+`--since` and `--until` are inclusive calendar dates in the selected timezone.
+A round with no date is left out of a date window. `--course` accepts the
+namespaced id or the source id. `--holes` matches `holes_scored`, so 9-hole and
+18-hole rounds stay separate. `--last` keeps that many newest matches.
+`--minimum-yards` applies only to `clubs` and `snapshot`. It drops shorter
+recorded distances from the average, median, and percentiles. The shot count
+stays, and partial shots are still not classified.
 
 ## Retrieve Your Archive
 
@@ -194,11 +215,12 @@ same CLI as `18birdies`.
 | --- | --- |
 | Round totals and per-hole scores | A completed 18-hole round from a partial card |
 | Recorded shots, clubs, distances, coordinates | All scoring strokes from the shot-entry count |
-| Round putting, fairway and GIR statistics | Per-hole stats absent from the source |
-| Measured club distance means and medians | Smart, carry, or full-swing distances |
-| Course history and scoring by hole count | Nine- and eighteen-hole averages mixed together |
+| Round putting, fairway and GIR statistics | Per-hole putts, fairways, or GIR |
+| Birdies, pars, bogeys, and miss directions | A count hidden by `noStats` or a zero denominator |
+| Measured distances, medians, and quartiles | Smart, carry, or full-swing distances |
+| Course history, hole-number stroke averages, and scoring by hole count | Nine- and eighteen-hole stroke averages mixed together |
 | Valid non-sentinel strokes-gained values | A genuine result from the unvalidated SG=100 marker |
-| Source handicap values | An official GHIN handicap |
+| Source handicap values in date order | An official GHIN handicap |
 
 `null` means unknown. A verified zero remains zero. Invalid/zero denominators
 do not become rates. The inspected schema's putt-hole denominators have not
@@ -243,8 +265,10 @@ stored.
 `--redact-coordinates` comes before the subcommand. It replaces `latitude`,
 `longitude`, `start_point`, `end_point`, `startPoint`, and `endPoint` with null
 in that command's JSON. Scores, distances, and round totals stay. The store and
-the saved archive are unchanged. Use it before pasting `summary`, `trends`, or
-`snapshot` from a terminal scrollback.
+the saved archive are unchanged. `--redact-identity` likewise nulls `id`,
+`source_id`, `course_id`, `course`, `name`, `round_handicap`, and `round_ids`
+in that command's JSON. Use either flag before pasting output from a terminal
+scrollback.
 
 No scheduled acquisition or ongoing-refresh promise is made. Re-export and
 import when you need newer data. See [security notes](SECURITY.md) before sharing
@@ -254,8 +278,7 @@ logs or reports; bug reports must use invented examples only.
 
 ```sh
 python -m pip install -e '.[dev,timezones]'
-python -m unittest discover -s tests -v
-python -m pytest -q
+python -m pytest -q --cov=eighteenbirdies --cov-report=term-missing --cov-fail-under=90
 ruff check .
 ruff format --check .
 python -m mypy
@@ -263,7 +286,9 @@ python -m build
 python -m twine check dist/*
 ```
 
-Tests use synthetic data only. CI tests three operating systems and three
-Python versions, then validates the wheel/source archive and CLI. It does not
-publish packages. See [contributing](CONTRIBUTING.md), [changelog](CHANGELOG.md),
-and the [MIT license](LICENSE).
+Tests use synthetic data only. CI tests three operating systems and Python
+3.11 through 3.14, reports coverage, type-checks the client and retrieval
+modules, then validates the wheel/source archive and CLI. It does not publish
+packages. A weekly job reads the public export page, with no credentials, and
+fails if the login or archive path disappears. See [contributing](CONTRIBUTING.md),
+[changelog](CHANGELOG.md), and the [MIT license](LICENSE).

@@ -28,8 +28,9 @@ credentials. Retrieval refuses to start when `DEBUG`, `PWDEBUG`, or
 The browser fallback saves an archive only while the page is still
 `https://18birdies.com/`. `--redact-coordinates` comes before the subcommand
 and nulls `latitude`, `longitude`, `start_point`, `end_point`, `startPoint`,
-and `endPoint` in JSON output. The store and the full archive still contain
-them.
+and `endPoint` in JSON output. `--redact-identity` nulls ids, course names, and
+the source handicap in that same output. The store and the full archive still
+contain them.
 
 An account export may contain profile details, messages, contacts, identifiers,
 and precise shot locations. Keep the original export outside your repository.

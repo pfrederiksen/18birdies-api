@@ -162,7 +162,7 @@ class CloudTransportTests(unittest.TestCase):
         for failure in [KeyboardInterrupt(), TimeoutError("SYNTHETIC_SECRET")]:
             self.connections.clear()
 
-            def factory(*args, **kwargs):
+            def factory(*args, failure=failure, **kwargs):
                 connection = self.factory(*args, **kwargs)
                 connection.request.side_effect = failure
                 return connection
@@ -182,13 +182,15 @@ class CloudTransportTests(unittest.TestCase):
         ]:
             self.connections.clear()
 
-            def factory(*args, **kwargs):
+            def factory(*args, status=status, content_type=content_type, **kwargs):
                 connection = self.factory(*args, **kwargs)
                 response = connection.getresponse.return_value
                 response.status = status
-                response.getheader.side_effect = lambda key, default=None: {
-                    "Content-Type": content_type
-                }.get(key, default)
+                response.getheader.side_effect = (
+                    lambda key, default=None, content_type=content_type: {
+                        "Content-Type": content_type
+                    }.get(key, default)
+                )
                 return connection
 
             with self.assertRaises(RetrievalError):
@@ -331,7 +333,7 @@ class EnvironmentCredentialTests(unittest.TestCase):
             self.values[cloud.ENV_PASSWORD_KEY] = password
             self.connections.clear()
 
-            def factory(*args, **kwargs):
+            def factory(*args, kind=kind, password=password, **kwargs):
                 connection = self.factory(*args, **kwargs)
                 connection.request.side_effect = kind(password)
                 return connection
@@ -376,7 +378,7 @@ class EnvironmentCredentialTests(unittest.TestCase):
             self.values[cloud.ENV_PASSWORD_KEY] = "INVENTED-SECRET"
             self.connections.clear()
 
-            def factory(*args, **kwargs):
+            def factory(*args, data=data, **kwargs):
                 connection = self.factory(*args, **kwargs)
                 connection.getresponse.return_value.read1.side_effect = [data, b""]
                 return connection

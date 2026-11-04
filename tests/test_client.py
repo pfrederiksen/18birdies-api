@@ -202,11 +202,18 @@ class ClientTests(unittest.TestCase):
             client.get_round("round-a")["coverage"]["issues"],
         )
         self.assertIsNone(client.summary()["scoring_by_holes"][0]["average_strokes"])
+        self.assertIsNone(client.summary()["scoring_by_holes"][0]["average_score_to_par"])
+        self.assertIsNone(client.summary()["scoring_by_holes"][0]["best_score_to_par"])
 
     def test_summary_does_not_mix_nine_and_partial(self):
         summary = self.client().summary()
         self.assertEqual(summary["scored_holes"], 11)
         self.assertEqual(summary["exported_shots"], 2)
+        unknown_scoring = {name: {"total": None, "rounds": 0} for _, name, _ in api.SCORING_FIELDS}
+        unknown_fairways = {
+            name: {"total": None, "rounds": 0} for _, name in api.FAIRWAY_DIRECTION_FIELDS
+        }
+        unknown_gir = {name: {"total": None, "rounds": 0} for _, name in api.GIR_DIRECTION_FIELDS}
         self.assertEqual(
             summary["scoring_by_holes"],
             [
@@ -216,6 +223,11 @@ class ClientTests(unittest.TestCase):
                     "scored_rounds": 1,
                     "average_strokes": 9,
                     "best_strokes": 9,
+                    "average_score_to_par": 1,
+                    "best_score_to_par": 1,
+                    "scoring": unknown_scoring,
+                    "fairway_directions": unknown_fairways,
+                    "gir_directions": unknown_gir,
                 },
                 {
                     "holes_scored": 9,
@@ -223,12 +235,21 @@ class ClientTests(unittest.TestCase):
                     "scored_rounds": 1,
                     "average_strokes": 36,
                     "best_strokes": 36,
+                    "average_score_to_par": 0,
+                    "best_score_to_par": 0,
+                    "scoring": unknown_scoring,
+                    "fairway_directions": unknown_fairways,
+                    "gir_directions": unknown_gir,
                 },
             ],
         )
+        self.assertEqual(summary["scoring"], unknown_scoring)
         self.assertEqual(summary["fairway_rounds"], 1)
         self.assertEqual(summary["putt_rounds"], 1)
-        self.assertEqual(len(self.client().trends()), 1)
+        trends = self.client().trends()
+        self.assertEqual(len(trends["months"]), 1)
+        self.assertEqual(trends["last_10"]["rounds"], 2)
+        self.assertEqual(trends["last_20"]["rounds"], 2)
         self.assertEqual(self.client().courses.get("course-a")["rounds"], 2)
 
     def test_clubs_use_actual_recorded_distance_not_smart_distance(self):
@@ -237,6 +258,11 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(sorted(c["average_distance"] for c in clubs), [120, 240])
         self.assertTrue(all(c["smart_distance"] is None for c in clubs))
         self.assertTrue(all(c["distance_samples"] == 1 for c in clubs))
+        self.assertTrue(
+            all(c["percentile_25"] is None and c["percentile_75"] is None for c in clubs)
+        )
+        self.assertTrue(all(c["minimum_yards"] is None for c in clubs))
+        self.assertTrue(all(c["includes_partial_shots"] is None for c in clubs))
 
     def test_import_is_private_golf_only_and_preserves_provenance(self):
         client = api.EighteenBirdiesClient.import_export(
@@ -347,7 +373,7 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(
                 api.main(["--export", str(self.path), "--redact-coordinates", "trends"]), 0
             )
-        self.assertEqual(json.loads(trends.getvalue())[0]["rounds"], 2)
+        self.assertEqual(json.loads(trends.getvalue())["months"][0]["rounds"], 2)
 
     def test_entire_approved_subtrees_preserved_including_future_fields(self):
         raw = self.data["myData"]["activityData"]["rounds"][0]
@@ -525,6 +551,8 @@ class ClientTests(unittest.TestCase):
             "trends",
             "courses",
             "clubs",
+            "coverage",
+            "handicap",
             "capabilities",
             "snapshot",
         ):
@@ -689,7 +717,10 @@ class ClientTests(unittest.TestCase):
             )
             rounds.append(item)
         client._rounds = CountedRounds(rounds)
-        self.assertEqual(len(client.trends()), 50)
+        trends = client.trends()
+        self.assertEqual(len(trends["months"]), 50)
+        self.assertEqual(trends["last_10"]["rounds"], 10)
+        self.assertEqual(trends["last_20"]["rounds"], 20)
         self.assertEqual(client._rounds.iterations, 1)
         client._rounds.iterations = 0
         self.assertEqual(len(client.course_history()), 50)
@@ -730,6 +761,208 @@ class ClientTests(unittest.TestCase):
     def test_utf8_signature_is_supported(self):
         self.path.write_bytes(json.dumps(self.data).encode("utf-8-sig"))
         self.assertEqual(api.EighteenBirdiesClient.from_export(self.path).coverage()["rounds"], 2)
+
+    def test_scoring_and_direction_counts_keep_zero_and_no_stats(self):
+        stats = self.data["myData"]["activityData"]["rounds"][0]["stats"]
+        stats.update(
+            birdies=2,
+            pars=0,
+            bogeys=1,
+            fairwayLefts=1,
+            fairwayRights=0,
+            girLefts=1,
+            girNoChances=0,
+        )
+        parsed = self.client().get_round("round-a")["stats"]
+        self.assertEqual(parsed["scoring"]["birdies"], 2)
+        self.assertEqual(parsed["scoring"]["pars"], 0)
+        self.assertIsNone(parsed["scoring"]["eagles"])
+        self.assertEqual(
+            parsed["fairway_directions"], {"left": 1, "right": 0, "short": None, "long": None}
+        )
+        self.assertEqual(parsed["gir_directions"]["left"], 1)
+        self.assertEqual(parsed["gir_directions"]["no_chance"], 0)
+        self.assertIsNone(parsed["putts_per_hole"])
+        totals = self.client().summary()["scoring"]["birdies"]
+        self.assertEqual(totals, {"total": 2, "rounds": 1})
+        stats["recommendedStats"] = [{"type": "BIRDIES", "noStats": True, "value": 2}]
+        self.assertIsNone(self.client().get_round("round-a")["stats"]["scoring"]["birdies"])
+        stats["recommendedStats"] = [{"type": "FAIRWAY_HIT_PERCENTAGE", "noStats": True}]
+        hidden = self.client().get_round("round-a")["stats"]
+        self.assertIsNone(hidden["fairways_hit"])
+        self.assertTrue(all(value is None for value in hidden["fairway_directions"].values()))
+        stats["recommendedStats"] = []
+        stats["fairwayLefts"] = 5
+        self.assertIsNone(self.client().get_round("round-a")["stats"]["fairway_directions"]["left"])
+        self.assertEqual(self.client().get_round("round-a")["stats"]["fairways_hit"], 0)
+
+    def test_course_hole_strokes_count_ties_and_skip_unscored_slots(self):
+        holes = self.client().courses.get("course-a")["hole_strokes"]
+        by_number = {hole["number"]: hole for hole in holes}
+        self.assertEqual(by_number[1]["average_strokes"], 4)
+        self.assertEqual(by_number[1]["times_highest_score"], 1)
+        self.assertEqual(by_number[2]["average_strokes"], 4.5)
+        self.assertEqual(by_number[2]["times_highest_score"], 2)
+        self.assertEqual(by_number[3]["rounds"], 1)
+        self.assertNotIn(0, by_number)
+        self.assertEqual(len(holes), 9)
+
+    def test_handicap_series_keeps_missing_values_and_is_not_ghin(self):
+        series = self.client().handicap_series()
+        self.assertFalse(series["ghin"])
+        self.assertEqual(series["source"], "round_handicap")
+        self.assertEqual(
+            [(item["date"], item["round_handicap"]) for item in series["rounds"]],
+            [("2025-11-02", None), ("2025-11-01", "12.0")],
+        )
+
+    def test_round_filters_use_selected_dates_course_holes_and_last(self):
+        client = self.client()
+        self.data["myData"]["activityData"]["rounds"].append(
+            {"id": "undated", "clubId": {"id": "course-a"}, "strokes": 4, "holeStrokes": [4]}
+        )
+        self.data["myData"]["activityData"]["roundCount"] = 3
+        client = self.client()
+        dated = client.select_rounds(since="2025-11-02", until="2025-11-02")
+        self.assertEqual([item["source_id"] for item in dated], ["round-b"])
+        self.assertEqual(
+            [item["source_id"] for item in client.select_rounds(course="course-a", holes=9)],
+            ["round-b"],
+        )
+        self.assertEqual(
+            [
+                item["source_id"]
+                for item in client.select_rounds(course="18birdies:course:course-a")
+            ],
+            ["round-b", "round-a", "undated"],
+        )
+        self.assertEqual(client.select_rounds(course="missing-course"), [])
+        self.assertEqual([item["source_id"] for item in client.select_rounds(last=1)], ["round-b"])
+        self.assertIsNone(client.select_rounds())
+        with self.assertRaises(api.EighteenBirdiesError):
+            client.select_rounds(since="2025/11/02")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                api.main(
+                    [
+                        "--export",
+                        str(self.path),
+                        "--timezone",
+                        "America/Los_Angeles",
+                        "--holes",
+                        "9",
+                        "--last",
+                        "1",
+                        "list",
+                    ]
+                ),
+                0,
+            )
+        self.assertEqual([item["source_id"] for item in json.loads(output.getvalue())], ["round-b"])
+
+    def test_club_percentiles_and_optional_minimum_yardage(self):
+        shots = self.data["myData"]["activityData"]["rounds"][0]["shotEntries"]
+        shots[:] = [
+            {
+                "holeNumber": 1,
+                "distanceInYards": distance,
+                "stickTypeAndNumber": {"type": "IRON", "number": "7"},
+            }
+            for distance in (100, 200, 300, 400)
+        ]
+        clubs = self.client().club_distances()
+        self.assertEqual(len(clubs), 1)
+        self.assertEqual(clubs[0]["distance_samples"], 4)
+        self.assertEqual(clubs[0]["percentile_25"], 175)
+        self.assertEqual(clubs[0]["percentile_75"], 325)
+        self.assertIsNone(clubs[0]["smart_distance"])
+        filtered = self.client().club_distances(minimum_yards=150)
+        self.assertEqual(filtered[0]["total_shots"], 4)
+        self.assertEqual(filtered[0]["distance_samples"], 3)
+        self.assertEqual(filtered[0]["minimum_yards"], 150)
+        self.assertEqual(filtered[0]["average_distance"], 300)
+        with self.assertRaises(api.EighteenBirdiesError):
+            self.client().club_distances(minimum_yards=0)
+
+    def test_identity_redaction_nulls_names_ids_and_handicap_only(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--redact-identity", "snapshot"]), 0
+            )
+        text = output.getvalue()
+        redacted = json.loads(text)
+        self.assertNotIn("Synthetic Course", text)
+        self.assertNotIn("round-a", text)
+        self.assertNotIn("course-a", text)
+        self.assertNotIn("12.0", text)
+        self.assertIsNone(redacted["rounds"][1]["course"])
+        self.assertIsNone(redacted["rounds"][1]["round_handicap"])
+        self.assertEqual(redacted["summary"]["rounds"], 2)
+        self.assertEqual(
+            redacted["rounds"][1]["shots"][0]["start_point"]["latitude"],
+            0,
+        )
+        both = io.StringIO()
+        with contextlib.redirect_stdout(both):
+            self.assertEqual(
+                api.main(
+                    [
+                        "--export",
+                        str(self.path),
+                        "--redact-identity",
+                        "--redact-coordinates",
+                        "round",
+                        "round-a",
+                    ]
+                ),
+                0,
+            )
+        hidden = json.loads(both.getvalue())
+        self.assertIsNone(hidden["id"])
+        self.assertIsNone(hidden["shots"][0]["start_point"])
+        self.assertEqual(hidden["strokes"], 9)
+
+    def test_cli_distinguishes_not_found_invalid_json_and_unwritable_store(self):
+        missing = io.StringIO()
+        with contextlib.redirect_stderr(missing):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "round", "private-identifier"]), 2
+            )
+        self.assertEqual(missing.getvalue().strip(), "18Birdies export error: round not found.")
+        self.assertNotIn("private-identifier", missing.getvalue())
+        self.path.write_text("{", encoding="utf-8")
+        invalid = io.StringIO()
+        with contextlib.redirect_stderr(invalid):
+            self.assertEqual(api.main(["--export", str(self.path), "summary"]), 2)
+        self.assertEqual(
+            invalid.getvalue().strip(), "18Birdies export error: export is not valid JSON."
+        )
+        self.write()
+        blocked = io.StringIO()
+        with contextlib.redirect_stderr(blocked):
+            with patch.object(api.os, "replace", side_effect=PermissionError("synthetic")):
+                code = api.main(["--store", str(self.store), "import", str(self.path)])
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            blocked.getvalue().strip(), "18Birdies export error: store path is not writable."
+        )
+        self.assertNotIn(str(self.store), blocked.getvalue())
+        self.assertNotIn(str(self.path), blocked.getvalue())
+        refused = io.StringIO()
+        with contextlib.redirect_stderr(refused):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--since", "2025/11/02", "summary"]), 2
+            )
+        self.assertIn("Since date must be YYYY-MM-DD", refused.getvalue())
+        self.assertNotIn("2025/11/02", refused.getvalue())
+        yardage = io.StringIO()
+        with contextlib.redirect_stderr(yardage):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--minimum-yards", "100", "summary"]), 2
+            )
+        self.assertIn("Minimum yardage applies to clubs and snapshot", yardage.getvalue())
 
 
 if __name__ == "__main__":

@@ -7,8 +7,7 @@ telemetry, or publication behavior must never be added implicitly.
 python -m venv .venv
 # Activate the environment using your shell's usual command.
 python -m pip install -e '.[dev,timezones]'
-python -m unittest discover -s tests -v
-python -m pytest
+python -m pytest -q --cov=eighteenbirdies --cov-report=term-missing --cov-fail-under=90
 ruff check .
 ruff format --check .
 python -m mypy

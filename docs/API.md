@@ -35,7 +35,8 @@ Passing both `export_path` and `store_path` to the constructor is an error.
 | `club_distances()` | `clubs.distances()` |
 
 Additional methods: `courses.get(id)`, `stats.strokes_gained(round_ids=None)`,
-`capabilities()`, `coverage()`, `snapshot()`, and `raw_golf_data()`.
+`capabilities()`, `coverage()`, `snapshot()`, `select_rounds()`,
+`handicap_series()`, and `raw_golf_data()`.
 `clubs.smart_distances()` is a compatibility alias for measured aggregates;
 every `smart_distance` remains null.
 
@@ -53,6 +54,16 @@ date, date_utc, timestamp_ms,
 strokes, score_to_par, hole_slots, holes_scored, hole_score_total,
 round_handicap, holes, stats, shots, coverage
 ```
+
+`select_rounds(since, until, course, holes, last)` returns a newest-first copy,
+or `None` when every argument is unset. Dates are inclusive `YYYY-MM-DD` values
+in the selected timezone. A round with no date is excluded from a date window.
+`course` matches the namespaced course id or the source id. `holes` matches
+`holes_scored`. `last` keeps that many newest matches. Pass the returned list
+to `summary`, `trends`, `course_history`, `club_distances`, `coverage`,
+`handicap_series`, and `snapshot`. The same filters are global CLI options and
+apply to `list`, `summary`, `trends`, `courses`, `clubs`, `coverage`,
+`handicap`, and `snapshot`.
 
 `source` is `18birdies`. `date` uses the selected timezone (default UTC).
 `strokes` is the export's scoring-stroke total; `score_to_par` is its `score`
@@ -77,7 +88,13 @@ provide `club`, `type`, `number`, `loft_angle`, `total_shots`, `distance_samples
 `average_distance`, `median_distance`, `smart_distance`, `distance_unit`,
 `method`, `full_swing_only`, and `includes_partial_shots`. Only positive measured
 distances contribute samples. `distance_unit` is yards and `method` is
-`recorded_shot_distance`. Smart/full-swing/carry classification is unavailable.
+`recorded_shot_distance`. `percentile_25` and `percentile_75` are inclusive
+sample quartiles. Both stay null when fewer than two distances qualify.
+`minimum_yards` is null unless the caller sets one. A positive minimum drops
+shorter distances from the average, median, quartiles, and `distance_samples`.
+`total_shots` still counts every recorded shot for that club. Smart,
+full-swing, and carry classification stay unavailable, and
+`includes_partial_shots` stays null.
 
 ## Stats And Summaries
 
@@ -92,17 +109,45 @@ remain unvalidated; putts per hole stays null. Recommended SG values require
 `noStats: false`; primary non-sentinel values are supported. SG=100 is always
 unknown until its meaning is established independently.
 
+Scoring counts are `aces`, `double_eagle_or_better`, `eagles`, `birdies`,
+`pars`, `bogeys`, and `double_bogey_or_worse`. A missing field stays null. A
+present zero stays zero. `noStats: true` on `ACES`, `DOUBLE_EAGLE_OR_BETTER`,
+`EAGLES`, `BIRDIES`, `PARS`, `BOGEYS`, or `DOUBLE_BOGEY_OR_WORSE` hides that
+count. Fairway miss counts are `left`, `right`, `short`, and `long`. Green miss
+counts add `no_chance`. They use the fairway or green denominator and the same
+`FAIRWAY_HIT_PERCENTAGE` or `GIR_PERCENTAGE` availability flag. A count above
+its denominator is unknown. An impossible fairway-hit or green count still
+clears that denominator.
+
 Summaries group scoring by scored-hole count, excluding round totals that
-disagree with the hole sum. They expose contributing round counts for putting,
-fairway and GIR aggregates. Trends group these summaries by calendar month in
-the selected timezone. Course history includes round IDs and the same scoring
-breakdown. SG aggregation returns `{mean, rounds}` for each supported category.
+disagree with the hole sum. Each bucket includes average and best strokes and,
+for those same consistent rounds, average and best `score_to_par`. They also
+include scoring and miss-direction totals as `{total, rounds}`. A total stays
+null when no selected round has that count. The summary repeats those totals
+across the whole selection. Putting, fairway, and GIR aggregates still expose
+their contributing round counts. Nine-hole and eighteen-hole stroke averages
+stay in separate buckets.
+
+`trends()` returns `{months, last_10, last_20}`. `months` is the previous
+calendar-month list, each item still spread from `summary()` plus `month`.
+`last_10` and `last_20` are summaries of the newest matching rounds, including
+rounds that have no date when they fall in that newest-first window. Course
+history includes round IDs, the same scoring breakdown, and `hole_strokes`:
+average recorded strokes by hole number, the number of rounds that scored that
+hole, and how often that hole tied for the highest score in the round. Unscored
+slots are omitted. This is the player's own hole strokes, not par, putts,
+fairway, or green results. `handicap_series()` returns
+`{source: "round_handicap", ghin: false, rounds: [{id, date, round_handicap}]}`
+in newest-first order, with nulls left null. SG aggregation returns
+`{mean, rounds}` for each supported category.
 
 ## Capabilities, Coverage And Snapshots
 
 Capabilities describe parser support, not proof that a particular round has
 data. Live API, automatic refresh, smart distances, per-hole putting/fairway/GIR,
-pace, penalties, and GHIN handicap are not supported.
+pace, penalties, and GHIN handicap are not supported. Scoring counts, miss
+directions, hole-number stroke averages, and the source handicap series are
+supported only as exported or directly aggregated values.
 
 Round coverage identifies scored holes without shot entries, missing club or
 distance data, unmatched shot-hole assignments, unscored slots, and score-total
@@ -112,12 +157,21 @@ counts and latest-round diagnostics.
 
 The CLI flag `--redact-coordinates` replaces `latitude`, `longitude`,
 `start_point`, `end_point`, `startPoint`, and `endPoint` with null in that
-command's JSON. It is global and comes before the subcommand. Scores and
-distances remain. The stored subtree is unchanged.
+command's JSON. `--redact-identity` replaces `id`, `source_id`, `course_id`,
+`course`, `name`, `round_handicap`, and `round_ids` with null. Both are global
+and come before the subcommand. Scores and distances remain. The stored subtree
+is unchanged.
+
+CLI failures that can be named without private data say `round not found`,
+`export is not valid JSON`, or `store path is not writable`. Other validation
+failures keep one generic message. None of them echo paths, identifiers, or
+file contents.
 
 `snapshot()` returns `source`, `date_timezone`, `last_fetched`, `imported_at`,
 `provenance`, `total_rounds`, `total_shots`, `recent_rounds` (up to 10), `rounds`,
-`clubs`, `summary`, `trends`, `capabilities`, `coverage`, and `strokes_gained`.
+`clubs`, `summary`, `trends`, `handicap_series`, `capabilities`, `coverage`, and
+`strokes_gained`. A selected round list limits the round-derived fields.
+Provenance still describes the whole store.
 `last_fetched` means actual acquisition time or null, never local sync time.
 `total_shots` counts exported shot entries, not scoring strokes.
 
