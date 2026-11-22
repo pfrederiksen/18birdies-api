@@ -34,7 +34,7 @@ dev = [
   "packaging>=24.2",
   "pytest>=8",
   "pytest-cov>=6",
-  "ruff==0.17.3",
+  "ruff==0.17.5",
   "twine>=6.1",
 ]
 timezones = ["tzdata>=2024.1"]
