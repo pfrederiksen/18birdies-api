@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from collections.abc import Sequence
 from pathlib import Path
 import statistics
@@ -45,7 +46,7 @@ def default_store_path() -> Path:
 
 
 DEFAULT_STORE = default_store_path()
-ROUND_FIELDS = {
+RECOGNIZED_ROUND_FIELDS = (
     "id",
     "timestamp",
     "clubId",
@@ -55,7 +56,18 @@ ROUND_FIELDS = {
     "stats",
     "roundHandicap",
     "shotEntries",
-}
+)
+ROUND_FIELDS = set(RECOGNIZED_ROUND_FIELDS)
+RECOGNIZED_SHOT_FIELDS = ("holeNumber", "stickTypeAndNumber", "distanceInYards")
+_CHANGED_ROUND_FIELDS = ("strokes", "holeStrokes", "shotEntries", "roundHandicap")
+_SG_SOURCES = (
+    ("overall", "strokeGainOverall", "SG_OVERALL"),
+    ("tee_to_green", "strokeGainTeeToGreen", "SG_TEE_TO_GREEN"),
+    ("putting", None, "SG_PUTTING"),
+    ("sand", None, "SG_SAND"),
+)
+_PLAIN_DECIMAL = re.compile(r"-?\d+(?:\.\d+)?")
+_MISSING = object()
 STAT_COUNTS = {
     "aces",
     "doubleEagleOrBetter",
@@ -119,9 +131,23 @@ FILTER_COMMANDS = (
     "clubs",
     "coverage",
     "handicap",
+    "strokes-gained",
     "snapshot",
 )
 YARDAGE_COMMANDS = ("clubs", "snapshot")
+
+
+def _english_list(items: tuple[str, ...]) -> str:
+    """Join command names the way the fixed CLI sentences name them."""
+    if len(items) <= 1:
+        return "".join(items)
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+_FILTER_ERROR = f"Round filters apply to {_english_list(FILTER_COMMANDS)}"
+_YARDAGE_ERROR = f"Minimum yardage applies to {_english_list(YARDAGE_COMMANDS)}"
 _SAFE_OS_ERRORS = {
     "Timed out waiting for the local store lock": "timed out waiting for the local store lock.",
     "Store lock must be a regular file": "store lock must be a regular file.",
@@ -133,13 +159,23 @@ _SAFE_CLI_ERRORS = {
     "Last filter must be a nonnegative integer",
     "Course filter must be a course id",
     "Since date must be on or before until date",
-    "Round filters apply to list, summary, trends, courses, clubs, coverage, handicap, and snapshot",
-    "Minimum yardage applies to clubs and snapshot",
+    _FILTER_ERROR,
+    _YARDAGE_ERROR,
     "Minimum yardage must be a positive number up to 10000",
     "Round limit must be a nonnegative integer",
     "--export cannot be used with retrieve",
     "--export cannot be used with import",
+    "Missing import change counts",
 }
+COVERAGE_ISSUES = (
+    "scored_holes_without_shots",
+    "shots_without_matching_hole_slot",
+    "shots_missing_distance",
+    "shots_missing_club",
+    "reported_strokes_differ_from_scored_holes",
+    "unscored_hole_slots",
+    "hole_scores_unavailable",
+)
 
 
 class ShotClub(TypedDict):
@@ -264,6 +300,12 @@ class ScoreBucket(TypedDict):
     best_strokes: int | None
     average_score_to_par: float | None
     best_score_to_par: int | None
+    average_putts_per_round: float | None
+    putt_rounds: int
+    fairway_pct: float | None
+    fairway_rounds: int
+    gir_pct: float | None
+    gir_rounds: int
     scoring: dict[str, CountTotal]
     fairway_directions: dict[str, CountTotal]
     gir_directions: dict[str, CountTotal]
@@ -323,6 +365,23 @@ def _number(value: Any) -> int | float | None:
         return value if math.isfinite(value) else None
     except OverflowError:
         return None
+
+
+def _handicap_number(value: Any) -> float | None:
+    """Finite float for an int, a float, or a plain decimal string. This is not GHIN."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if not isinstance(value, str) or _PLAIN_DECIMAL.fullmatch(value) is None:
+        return None
+    try:
+        number = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _integer(value: Any, low: int = 0, high: int = 1000000) -> bool:
@@ -731,6 +790,40 @@ def _counted_total(values: list[int | None]) -> CountTotal:
     return {"total": sum(known) if known else None, "rounds": len(known)}
 
 
+class _RateBlock(TypedDict):
+    average_putts_per_round: float | None
+    putt_rounds: int
+    fairway_pct: float | None
+    fairway_rounds: int
+    gir_pct: float | None
+    gir_rounds: int
+
+
+def _rate_block(rounds: list[Round]) -> _RateBlock:
+    """Putt average and pooled fairway/GIR rates for one already-separated group."""
+    fairway = [round_["stats"] for round_ in rounds if round_["stats"]["fairways_hit"] is not None]
+    gir = [round_["stats"] for round_ in rounds if round_["stats"]["gir"] is not None]
+    putts = [round_["stats"]["putts"] for round_ in rounds if round_["stats"]["putts"] is not None]
+    return {
+        "average_putts_per_round": _mean([value for value in putts if value is not None]),
+        "putt_rounds": len(putts),
+        "fairway_pct": _ratio(
+            sum(item["fairways_hit"] for item in fairway if item["fairways_hit"] is not None),
+            sum(
+                item["fairways_possible"]
+                for item in fairway
+                if item["fairways_possible"] is not None
+            ),
+        ),
+        "fairway_rounds": len(fairway),
+        "gir_pct": _ratio(
+            sum(item["gir"] for item in gir if item["gir"] is not None),
+            sum(item["gir_possible"] for item in gir if item["gir_possible"] is not None),
+        ),
+        "gir_rounds": len(gir),
+    }
+
+
 def _normal_stats(raw: dict[str, Any]) -> RoundStats:
     recommended = {item["type"]: item for item in raw.get("recommendedStats", [])}
 
@@ -829,11 +922,128 @@ def _normal_stats(raw: dict[str, Any]) -> RoundStats:
     }
 
 
+def _classify_putt_hole(stats: dict[str, Any], holes_scored: int) -> dict[str, int]:
+    """Count one round's raw puttHoleCount without treating it as a rate."""
+    counts = {"missing": 0, "zero": 0, "positive": 0, "positive_equals_holes_scored": 0}
+    if "puttHoleCount" not in stats or stats.get("puttHoleCount") is None:
+        counts["missing"] = 1
+        return counts
+    value = stats["puttHoleCount"]
+    if value == 0:
+        counts["zero"] = 1
+        return counts
+    if type(value) is int and value > 0:
+        counts["positive"] = 1
+        if value == holes_scored:
+            counts["positive_equals_holes_scored"] = 1
+        return counts
+    counts["missing"] = 1
+    return counts
+
+
+def _classify_sg(stats: dict[str, Any], key: str | None, stat_type: str) -> str:
+    """Classify the source strokes-gained value sg() would read. 100 stays unknown."""
+    recommended = {item["type"]: item for item in stats.get("recommendedStats", [])}
+    recommendation = recommended.get(stat_type, {})
+    if recommendation.get("noStats") is True:
+        return "absent"
+    number = recommendation.get("value") if recommendation.get("noStats") is False else None
+    if recommendation.get("noStats") is not False:
+        number = None if key is None else stats.get(key)
+    if isinstance(number, bool) or not isinstance(number, (int, float)):
+        return "absent"
+    if number == 100:
+        return "exactly_100"
+    return "kept"
+
+
+def _observe_round(raw: dict[str, Any], holes_scored: int) -> dict[str, Any]:
+    """Record raw-key presence and discarded stat shapes for a later coverage sum."""
+    raw_stats = raw.get("stats")
+    stats: dict[str, Any] = raw_stats if isinstance(raw_stats, dict) else {}
+    shot_counts = {name: 0 for name in RECOGNIZED_SHOT_FIELDS}
+    entries = raw.get("shotEntries")
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for name in RECOGNIZED_SHOT_FIELDS:
+                if name in entry:
+                    shot_counts[name] += 1
+    return {
+        "putt_hole_count": _classify_putt_hole(stats, holes_scored),
+        "strokes_gained": {
+            name: _classify_sg(stats, key, stat_type) for name, key, stat_type in _SG_SOURCES
+        },
+        "recognized_keys": {
+            "rounds": {name: 1 if name in raw else 0 for name in RECOGNIZED_ROUND_FIELDS},
+            "shot_entries": shot_counts,
+        },
+    }
+
+
+def _sum_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
+    putt = {"missing": 0, "zero": 0, "positive": 0, "positive_equals_holes_scored": 0}
+    gained = {name: {"absent": 0, "exactly_100": 0, "kept": 0} for name, _, _ in _SG_SOURCES}
+    recognized_rounds = {name: 0 for name in RECOGNIZED_ROUND_FIELDS}
+    recognized_shots = {name: 0 for name in RECOGNIZED_SHOT_FIELDS}
+    for observation in observations:
+        for key, value in observation["putt_hole_count"].items():
+            putt[key] += value
+        for name, label in observation["strokes_gained"].items():
+            gained[name][label] += 1
+        for name, value in observation["recognized_keys"]["rounds"].items():
+            recognized_rounds[name] += value
+        for name, value in observation["recognized_keys"]["shot_entries"].items():
+            recognized_shots[name] += value
+    return {
+        "putt_hole_count": putt,
+        "strokes_gained_counts": gained,
+        "recognized_keys": {"rounds": recognized_rounds, "shot_entries": recognized_shots},
+    }
+
+
+def _import_change_counts(
+    previous: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]],
+    *,
+    rewritten: bool,
+) -> dict[str, Any]:
+    """Count added and changed raw rounds. Values, ids, and course names stay out."""
+    split = {field: 0 for field in _CHANGED_ROUND_FIELDS}
+    added = 0
+    changed = 0
+    if previous is None:
+        added = len(incoming)
+    else:
+        prior = {round_["id"]: round_ for round_ in previous}
+        for raw in incoming:
+            old = prior.get(raw["id"])
+            if old is None:
+                added += 1
+                continue
+            diffs = [
+                field
+                for field in _CHANGED_ROUND_FIELDS
+                if old.get(field, _MISSING) != raw.get(field, _MISSING)
+            ]
+            if diffs:
+                changed += 1
+                for field in diffs:
+                    split[field] += 1
+    return {
+        "store_rewritten": rewritten,
+        "rounds_added": added,
+        "rounds_changed": changed,
+        "changed_rounds": split,
+    }
+
+
 def _normalize_round(
     raw: dict[str, Any],
     courses: dict[str, str | None],
     date_zone: tzinfo = UTC,
-) -> Round:
+) -> tuple[Round, dict[str, Any]]:
     rid = f"{SOURCE}:round:{raw['id']}"
     club_id = (raw.get("clubId") or {}).get("id")
     cid = club_id if isinstance(club_id, str) and club_id else None
@@ -890,7 +1100,7 @@ def _normalize_round(
     if not holes:
         issues.append("hole_scores_unavailable")
     stats = _normal_stats(raw.get("stats") or {})
-    return {
+    normalized: Round = {
         "id": rid,
         "source_id": raw["id"],
         "source": SOURCE,
@@ -925,6 +1135,7 @@ def _normalize_round(
             "issues": issues,
         },
     }
+    return normalized, _observe_round(raw, len(scored))
 
 
 def redact_coordinates(value: Any) -> Any:
@@ -956,6 +1167,7 @@ _IDENTITY_KEYS = {
     "course",
     "name",
     "round_handicap",
+    "round_handicap_number",
     "round_ids",
 }
 
@@ -1082,14 +1294,9 @@ class _Stats:
         return self.client.trends(rounds)
 
     def strokes_gained(
-        self, round_ids: list[str] | None = None
+        self, rounds: list[Round] | None = None
     ) -> dict[str, dict[str, float | int | None]]:
-        rounds = (
-            [self.client.get_round(round_id) for round_id in round_ids]
-            if round_ids is not None
-            else self.client.list_rounds()
-        )
-        return _strokes_gained(rounds)
+        return self.client.strokes_gained(rounds)
 
 
 class EighteenBirdiesClient:
@@ -1098,6 +1305,8 @@ class EighteenBirdiesClient:
     timezone_name: str
     _envelope: dict[str, Any]
     _rounds: list[Round]
+    _observations: dict[str, dict[str, Any]]
+    _import_changes: dict[str, Any] | None
     rounds: _Rounds
     courses: _Courses
     clubs: _Clubs
@@ -1147,16 +1356,21 @@ class EighteenBirdiesClient:
         date_zone = _date_zone(timezone_name)
         self.timezone_name = timezone_name
         self._envelope = envelope
+        self._import_changes = None
         golf = envelope["golf"]
         courses = {
             club["clubId"]: club.get("name") if isinstance(club.get("name"), str) else None
             for club in golf["playedClubs"]
         }
+        observations: dict[str, dict[str, Any]] = {}
+        normalized: list[Round] = []
+        for raw in golf["activityData"]["rounds"]:
+            round_, observation = _normalize_round(raw, courses, date_zone)
+            normalized.append(round_)
+            observations[round_["id"]] = observation
+        self._observations = observations
         self._rounds = sorted(
-            [
-                _normalize_round(round_, courses, date_zone)
-                for round_ in golf["activityData"]["rounds"]
-            ],
+            normalized,
             key=lambda round_: (
                 round_["timestamp_ms"] if round_["timestamp_ms"] is not None else -1,
                 round_["id"],
@@ -1200,27 +1414,44 @@ class EighteenBirdiesClient:
                 new = envelope["provenance"]
                 if new["source_sha256"] == old["source_sha256"]:
                     if new["acquired_at"] is None or new["acquired_at"] == old["acquired_at"]:
+                        previous._import_changes = _import_change_counts([], [], rewritten=False)
                         return previous
                     if old["acquired_at"] is not None and new["acquired_at"] < old["acquired_at"]:
                         raise EighteenBirdiesError("Acquisition time cannot move backwards")
                     envelope = copy.deepcopy(previous._envelope)
                     envelope["provenance"]["acquired_at"] = new["acquired_at"]
+                    changes = _import_change_counts([], [], rewritten=True)
                 else:
+                    prior_rounds = previous._envelope["golf"]["activityData"]["rounds"]
+                    next_rounds = envelope["golf"]["activityData"]["rounds"]
                     prior_ids = {r["source_id"] for r in previous._rounds}
-                    next_ids = {r["id"] for r in envelope["golf"]["activityData"]["rounds"]}
+                    next_ids = {r["id"] for r in next_rounds}
                     if not prior_ids <= next_ids:
                         raise ReducedArchiveError(
                             "Export omits previously imported rounds; prior store preserved. "
                             "Use --store PATH import EXPORT --new-store for a shortened archive."
                         )
+                    changes = _import_change_counts(prior_rounds, next_rounds, rewritten=True)
+            else:
+                changes = _import_change_counts(
+                    None, envelope["golf"]["activityData"]["rounds"], rewritten=True
+                )
             candidate = cls.__new__(cls)
             candidate._initialize(envelope, timezone_name)
+            candidate._import_changes = changes
             _atomic_write(destination, envelope)
             return candidate
 
     @property
     def provenance(self) -> dict:
         return copy.deepcopy(self._envelope["provenance"])
+
+    @property
+    def import_changes(self) -> dict[str, Any] | None:
+        """Count-only result of the import that returned this client, if any."""
+        if self._import_changes is None:
+            return None
+        return copy.deepcopy(self._import_changes)
 
     def raw_golf_data(self) -> dict:
         """Return original approved activityData/playedClubs, including future fields."""
@@ -1317,6 +1548,7 @@ class EighteenBirdiesClient:
                 for round_ in consistent
                 if round_["score_to_par"] is not None
             ]
+            rates = _rate_block(group)
             buckets.append(
                 {
                     "holes_scored": size,
@@ -1326,6 +1558,12 @@ class EighteenBirdiesClient:
                     "best_strokes": min(scores) if scores else None,
                     "average_score_to_par": _mean(relative),
                     "best_score_to_par": min(relative) if relative else None,
+                    "average_putts_per_round": rates["average_putts_per_round"],
+                    "putt_rounds": rates["putt_rounds"],
+                    "fairway_pct": rates["fairway_pct"],
+                    "fairway_rounds": rates["fairway_rounds"],
+                    "gir_pct": rates["gir_pct"],
+                    "gir_rounds": rates["gir_rounds"],
                     "scoring": _scoring_aggregate(group, "scoring", scoring_names),
                     "fairway_directions": _scoring_aggregate(
                         group, "fairway_directions", fairway_names
@@ -1333,47 +1571,48 @@ class EighteenBirdiesClient:
                     "gir_directions": _scoring_aggregate(group, "gir_directions", gir_names),
                 }
             )
-        fw = [round_["stats"] for round_ in selected if round_["stats"]["fairways_hit"] is not None]
-        gir = [round_["stats"] for round_ in selected if round_["stats"]["gir"] is not None]
-        putts = [
-            round_["stats"]["putts"] for round_ in selected if round_["stats"]["putts"] is not None
-        ]
+        rates = _rate_block(selected)
+        putt_lengths = {
+            round_["holes_scored"] for round_ in selected if round_["stats"]["putts"] is not None
+        }
         return {
             "rounds": len(selected),
             "scored_holes": sum(round_["holes_scored"] for round_ in selected),
             "exported_shots": sum(len(round_["shots"]) for round_ in selected),
             "scoring_by_holes": buckets,
-            "fairway_pct": _ratio(
-                sum(item["fairways_hit"] for item in fw if item["fairways_hit"] is not None),
-                sum(
-                    item["fairways_possible"]
-                    for item in fw
-                    if item["fairways_possible"] is not None
-                ),
+            "fairway_pct": rates["fairway_pct"],
+            "gir_pct": rates["gir_pct"],
+            "average_putts_per_round": (
+                None if len(putt_lengths) > 1 else rates["average_putts_per_round"]
             ),
-            "gir_pct": _ratio(
-                sum(item["gir"] for item in gir if item["gir"] is not None),
-                sum(item["gir_possible"] for item in gir if item["gir_possible"] is not None),
-            ),
-            "average_putts_per_round": _mean([value for value in putts if value is not None]),
-            "putt_rounds": len(putts),
-            "fairway_rounds": len(fw),
-            "gir_rounds": len(gir),
+            "putt_rounds": rates["putt_rounds"],
+            "fairway_rounds": rates["fairway_rounds"],
+            "gir_rounds": rates["gir_rounds"],
             "putts_per_hole": None,
             "scoring": _scoring_aggregate(selected, "scoring", scoring_names),
             "fairway_directions": _scoring_aggregate(selected, "fairway_directions", fairway_names),
             "gir_directions": _scoring_aggregate(selected, "gir_directions", gir_names),
         }
 
+    def strokes_gained(
+        self, rounds: list[Round] | None = None
+    ) -> dict[str, dict[str, float | int | None]]:
+        selected = self._rounds if rounds is None else rounds
+        return _strokes_gained(selected)
+
     def trends(self, rounds: list[Round] | None = None) -> dict[str, Any]:
         selected = self._rounds if rounds is None else rounds
         groups: dict[str, list[Round]] = {}
         ordered: list[Round] = []
+        undated = 0
         for round_ in selected:
             ordered.append(round_)
             if round_["date"]:
                 groups.setdefault(round_["date"][:7], []).append(round_)
+            else:
+                undated += 1
         return {
+            "undated_rounds": undated,
             "months": [{"month": month, **self.summary(groups[month])} for month in sorted(groups)],
             "last_10": self.summary(ordered[:10]),
             "last_20": self.summary(ordered[:20]),
@@ -1433,7 +1672,9 @@ class EighteenBirdiesClient:
             result.append(
                 {
                     "club": " ".join(
-                        str(part) for part in (kind, number, f"{loft}deg" if loft else None) if part
+                        str(part)
+                        for part in (kind, number, None if loft is None else f"{loft}deg")
+                        if part
                     ),
                     "type": kind,
                     "number": number,
@@ -1457,17 +1698,28 @@ class EighteenBirdiesClient:
     def handicap_series(self, rounds: list[Round] | None = None) -> dict[str, Any]:
         """Source round-handicap values in newest-first order. This is not GHIN."""
         selected = self._rounds if rounds is None else rounds
-        return {
-            "source": "round_handicap",
-            "ghin": False,
-            "rounds": [
+        entries: list[dict[str, Any]] = []
+        numbers: list[float] = []
+        for round_ in selected:
+            number = _handicap_number(round_["round_handicap"])
+            if number is not None:
+                numbers.append(number)
+            entries.append(
                 {
                     "id": round_["id"],
                     "date": round_["date"],
                     "round_handicap": round_["round_handicap"],
+                    "round_handicap_number": number,
                 }
-                for round_ in selected
-            ],
+            )
+        return {
+            "source": "round_handicap",
+            "ghin": False,
+            "numeric_rounds": len(numbers),
+            "newest_minus_oldest": round(numbers[0] - numbers[-1], 3)
+            if len(numbers) >= 2
+            else None,
+            "rounds": entries,
         }
 
     def capabilities(self) -> dict[str, Any]:
@@ -1500,6 +1752,7 @@ class EighteenBirdiesClient:
 
     def coverage(self, rounds: list[Round] | None = None) -> dict[str, Any]:
         selected = self._rounds if rounds is None else rounds
+        observed = _sum_observations([self._observations[round_["id"]] for round_ in selected])
         return {
             "rounds": len(selected),
             "rounds_with_shots": sum(bool(round_["shots"]) for round_ in selected),
@@ -1509,9 +1762,17 @@ class EighteenBirdiesClient:
             "rounds_with_tracking_gaps": sum(
                 bool(round_["coverage"]["issues"]) for round_ in selected
             ),
+            "rounds_without_course": sum(round_["course_id"] is None for round_ in selected),
+            "issue_counts": {
+                issue: sum(issue in round_["coverage"]["issues"] for round_ in selected)
+                for issue in COVERAGE_ISSUES
+            },
             "shot_tracking_complete": None,
             "sg_sentinel_policy": "100_is_unknown",
             "putt_hole_denominator_validated": False,
+            "putt_hole_count": observed["putt_hole_count"],
+            "strokes_gained_counts": observed["strokes_gained_counts"],
+            "recognized_keys": observed["recognized_keys"],
             "latest_round": copy.deepcopy(selected[0]["coverage"]) if selected else None,
         }
 
@@ -1539,7 +1800,7 @@ class EighteenBirdiesClient:
             "handicap_series": self.handicap_series(selected),
             "capabilities": self.capabilities(),
             "coverage": self.coverage(selected),
-            "strokes_gained": _strokes_gained(selected),
+            "strokes_gained": self.strokes_gained(selected),
         }
 
 
@@ -1617,6 +1878,7 @@ def main(argv: list[str] | None = None) -> int:
         "clubs",
         "coverage",
         "handicap",
+        "strokes-gained",
         "capabilities",
         "snapshot",
     ):
@@ -1651,12 +1913,9 @@ def main(argv: list[str] | None = None) -> int:
             for value in (args.since, args.until, args.course, args.holes, args.last)
         )
         if filters_set and args.command not in FILTER_COMMANDS:
-            raise EighteenBirdiesError(
-                "Round filters apply to list, summary, trends, courses, clubs, "
-                "coverage, handicap, and snapshot"
-            )
+            raise EighteenBirdiesError(_FILTER_ERROR)
         if args.minimum_yards is not None and args.command not in YARDAGE_COMMANDS:
-            raise EighteenBirdiesError("Minimum yardage applies to clubs and snapshot")
+            raise EighteenBirdiesError(_YARDAGE_ERROR)
         if args.command == "retrieve":
             from .retrieval import retrieve
 
@@ -1673,9 +1932,16 @@ def main(argv: list[str] | None = None) -> int:
                 timezone_name=args.timezone,
                 new_store=args.new_store,
             )
+            changes = client.import_changes
+            if changes is None:
+                raise EighteenBirdiesError("Missing import change counts")
             result = {
                 "source": SOURCE,
                 "imported_rounds": len(client.list_rounds()),
+                "store_rewritten": changes["store_rewritten"],
+                "rounds_added": changes["rounds_added"],
+                "rounds_changed": changes["rounds_changed"],
+                "changed_rounds": changes["changed_rounds"],
                 "provenance": client.provenance,
                 "coverage": client.coverage(),
             }
@@ -1706,6 +1972,7 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "coverage": lambda: client.coverage(selected),
                     "handicap": lambda: client.handicap_series(selected),
+                    "strokes-gained": lambda: client.strokes_gained(selected),
                     "capabilities": client.capabilities,
                     "snapshot": lambda: client.snapshot(selected, minimum_yards=args.minimum_yards),
                 }[args.command]()

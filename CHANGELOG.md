@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Scoring buckets now include average putts, fairway percentage, and
+  green-in-regulation percentage, each with its round count. The selection-wide
+  putts average stays null when those putts come from more than one scored-hole
+  count. Putts per hole stays null.
+- Import JSON reports whether the store was rewritten, how many rounds were
+  added, and how many changed, split by strokes, hole scores, shot entries, and
+  source handicap. Those counts do not include round ids, course names, or values.
+- Coverage counts raw `puttHoleCount` values (missing, zero, positive, and
+  positive values equal to scored holes) and, for each strokes-gained category,
+  whether the source value was absent, exactly 100, or kept. A value of 100
+  stays unknown.
+- Coverage reports which recognized round and shot-entry keys were present, how
+  many selected rounds have each tracking issue, and how many have no course.
+- Handicap entries include a numeric reading for an int, a float, or a plain
+  decimal string, plus how many values are numeric and the newest-minus-oldest
+  gap. The original text stays, and this is still not GHIN.
+- Added a `strokes-gained` command for the selected rounds.
+  `stats.strokes_gained` now takes that round list.
+- Trends report how many selected rounds have no date. Those rounds stay out of
+  the month buckets.
+- Filter and minimum-yardage errors are built from the command lists they name.
+- A club loft of 0 stays in the club label.
+
 ## 0.3.0
 
 - Documented that global `--store` comes before `import --new-store`. The

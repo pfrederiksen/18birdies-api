@@ -38,9 +38,9 @@ Passing both `export_path` and `store_path` to the constructor is an error.
 selection only. `minimum_yards` limits which recorded distances enter the
 average, median, and quartiles.
 
-Additional methods: `courses.get(id)`, `stats.strokes_gained(round_ids=None)`,
-`capabilities()`, `coverage()`, `snapshot()`, `select_rounds()`,
-`handicap_series()`, and `raw_golf_data()`.
+Additional methods: `courses.get(id)`, `stats.strokes_gained(rounds=None)`,
+`strokes_gained(rounds=None)`, `capabilities()`, `coverage()`, `snapshot()`,
+`select_rounds()`, `handicap_series()`, `import_changes`, and `raw_golf_data()`.
 `clubs.smart_distances()` is a compatibility alias for measured aggregates;
 every `smart_distance` remains null.
 
@@ -66,10 +66,11 @@ in the selected timezone. A round with no date is excluded from a date window.
 nothing returns an empty list. `holes` matches `holes_scored` and must be an
 integer from 0 through 18. `since` must be on or before `until`. `last` keeps
 that many newest matches. Pass the returned list to `summary`, `trends`,
-`course_history`, `club_distances`, `coverage`, `handicap_series`, and
-`snapshot`. The same filters are global CLI options and apply to `list`,
-`summary`, `trends`, `courses`, `clubs`, `coverage`, `handicap`, and
-`snapshot`. On `list`, `--limit` truncates after those filters. `--minimum-yards`
+`strokes_gained`, `course_history`, `club_distances`, `coverage`,
+`handicap_series`, and `snapshot`. The same filters are global CLI options and
+apply to `list`, `summary`, `trends`, `courses`, `clubs`, `coverage`,
+`handicap`, `strokes-gained`, and `snapshot`. On `list`, `--limit` truncates
+after those filters. `--minimum-yards`
 is accepted only by `clubs` and `snapshot`, and only for a positive number up
 to 10000. `courses.get` raises a fixed course-not-found error. The CLI has no
 course-get command.
@@ -92,7 +93,8 @@ latitude/longitude when present. The export provides no independent shot ID;
 ordinal shot IDs identify entries within an unchanged export, not stable events
 across reordered exports. Reconcile corrections by round and provenance.
 
-Club aggregates group recorded shots by club type, number, and loft. They
+Club aggregates group recorded shots by club type, number, and loft. A loft of
+0 remains in the `club` label as `0deg`. They
 provide `club`, `type`, `number`, `loft_angle`, `total_shots`, `distance_samples`,
 `average_distance`, `median_distance`, `percentile_25`, `percentile_75`,
 `minimum_yards`, `smart_distance`, `distance_unit`, `method`, `full_swing_only`,
@@ -136,24 +138,37 @@ Summaries group scoring by scored-hole count, excluding round totals that
 disagree with the hole sum. Each bucket includes average and best strokes and,
 for those same consistent rounds, average and best `score_to_par`. They also
 include scoring and miss-direction totals as `{total, rounds}`. A total stays
-null when no selected round has that count. The summary repeats those totals
-across the whole selection. Putting, fairway, and GIR aggregates still expose
-their contributing round counts. Nine-hole and eighteen-hole stroke averages
-stay in separate buckets.
+null when no selected round has that count. Each bucket also includes
+`average_putts_per_round`, `putt_rounds`, `fairway_pct`, `fairway_rounds`,
+`gir_pct`, and `gir_rounds` for that scored-hole count. The summary repeats
+those totals across the whole selection. Putting, fairway, and GIR aggregates
+still expose their contributing round counts. Nine-hole and eighteen-hole
+stroke averages stay in separate buckets. The selection-wide
+`average_putts_per_round` is null when the putts being averaged come from more
+than one `holes_scored` value; each bucket keeps its own average. `putts_per_hole`
+stays null.
 
-`trends()` returns `{months, last_10, last_20}`. `months` is the calendar-month
-list, each item spread from `summary()` plus `month`. `last_10` and `last_20`
-are summaries of the newest matching rounds, including rounds that have no date
-when they fall in that newest-first window. Course history includes round IDs,
-the same scoring breakdown, and `hole_strokes`. Each hole entry is
-`{number, rounds, average_strokes, times_highest_score}`: average recorded
-strokes by hole number, the number of rounds that scored that hole, and how
-often that hole tied for the highest score in the round. Unscored slots are
-omitted. This is the player's own hole strokes, not par, putts, fairway, or
-green results. `handicap_series()` returns
-`{source: "round_handicap", ghin: false, rounds: [{id, date, round_handicap}]}`
-in newest-first order, with nulls left null. SG aggregation returns
-`{mean, rounds}` for each supported category.
+`trends()` returns `{undated_rounds, months, last_10, last_20}`. `months` is the
+calendar-month list, each item spread from `summary()` plus `month`. Rounds
+with no date stay out of those buckets, and `undated_rounds` counts them.
+`last_10` and `last_20` are summaries of the newest matching rounds, including
+rounds that have no date when they fall in that newest-first window. Course
+history includes round IDs, the same scoring breakdown, and `hole_strokes`.
+Each hole entry is `{number, rounds, average_strokes, times_highest_score}`:
+average recorded strokes by hole number, the number of rounds that scored that
+hole, and how often that hole tied for the highest score in the round. Unscored
+slots are omitted. This is the player's own hole strokes, not par, putts,
+fairway, or green results. `handicap_series()` returns
+`{source: "round_handicap", ghin: false, numeric_rounds, newest_minus_oldest,
+rounds: [{id, date, round_handicap, round_handicap_number}]}` in newest-first
+order. `round_handicap` keeps the source spelling. `round_handicap_number` is a
+finite float only for an int, a float, or a plain decimal string with an
+optional leading minus and no units or other text. Anything else stays null.
+`numeric_rounds` counts those floats. `newest_minus_oldest` is the first numeric
+value minus the last in newest-first order, or null when fewer than two exist.
+This is still not GHIN. SG aggregation returns `{mean, rounds}` for each
+supported category and uses the same selected round list as `summary`. The CLI
+command is `strokes-gained`.
 
 ## Capabilities, Coverage And Snapshots
 
@@ -169,14 +184,25 @@ Round coverage identifies scored holes without shot entries, missing club or
 distance data, unmatched shot-hole assignments, unscored slots, and score-total
 disagreements. Scoring strokes and exported shots are separate counts.
 `shot_tracking_complete` stays null. Aggregate coverage includes round/hole/shot
-counts and latest-round diagnostics.
+counts, `rounds_without_course` for selected rounds whose course id is null,
+and `issue_counts` with a selected-round count for every per-round issue.
+`putt_hole_count` counts raw `puttHoleCount` values as `missing`, `zero`,
+`positive`, and `positive_equals_holes_scored`. `strokes_gained_counts` counts,
+for `overall`, `tee_to_green`, `putting`, and `sand`, whether the source value
+`sg()` would read was `absent`, `exactly_100`, or `kept`. A suppressed
+`noStats: true` value counts as absent. 100 stays unknown, and putts per hole
+stays null. `recognized_keys.rounds` is a round count for each name in
+`ROUND_FIELDS`, taken from the raw round. `recognized_keys.shot_entries` counts
+shot entries that contain `holeNumber`, `stickTypeAndNumber`, or
+`distanceInYards`. A filtered round list keeps these counts on that selection.
+Latest-round diagnostics remain.
 
 The CLI flag `--redact-coordinates` replaces `latitude`, `longitude`,
 `start_point`, `end_point`, `startPoint`, and `endPoint` with null in that
 command's JSON. `--redact-identity` replaces `id`, `source_id`, `course_id`,
-`course`, `name`, `round_handicap`, and `round_ids` with null. Both are global
-and come before the subcommand. Scores and distances remain. The stored subtree
-is unchanged.
+`course`, `name`, `round_handicap`, `round_handicap_number`, and `round_ids`
+with null. Both are global and come before the subcommand. Scores and distances
+remain. The stored subtree is unchanged.
 
 CLI failures that can be named without private data say `round not found`,
 `export is not valid JSON`, `cannot read the export or store`,
@@ -186,8 +212,10 @@ the CLI prints that same sentence if it is raised. Filter and option mistakes
 use the same fixed sentences as the SDK: a date must be `YYYY-MM-DD`, since
 must be on or before until, holes must be 0 through 18, and last and limit
 must be nonnegative. The course filter must be an id. Round filters apply only
-to the commands listed above, and minimum yardage applies only to clubs and
-snapshot. `--export` cannot
+to the commands named by the filter sentence, and minimum yardage applies only
+to the commands named by the yardage sentence. Those sentences are built from
+the same command lists the CLI checks, so a new command stays in the specific
+error. `--export` cannot
 be combined with `retrieve` or `import`. Schema failures keep one generic
 message. None of them echo paths, identifiers, or file contents.
 
@@ -235,6 +263,16 @@ Identical hashes do not
 rewrite bytes or advance freshness. Explicit later actual acquisition times
 can update acquisition metadata; backwards times for identical hashes fail.
 New snapshots omitting existing round IDs fail rather than erasing history.
+The import command's JSON adds `store_rewritten`, `rounds_added`,
+`rounds_changed`, and `changed_rounds`. `store_rewritten` is false when the
+source hash matches and the bytes stay. `rounds_added` counts source ids that
+were not in the previous store, or every round when the store is new.
+`rounds_changed` counts rounds present in both whose `strokes`, `holeStrokes`,
+`shotEntries`, or `roundHandicap` differ. `changed_rounds` splits that count by
+those four field names. A round can increment more than one field. Other field
+changes, including `score` and `stats`, do not increment these counts. The
+object has no round ids, course names, or values. `import_changes` on the
+returned client is the same object; opening a store later returns null.
 Pass `new_store=True` (CLI: `--store PATH import EXPORT --new-store`) to write a
 shortened archive to a different file. `--store` is global and comes before
 `import`. That call fails if the destination already exists, including as a
