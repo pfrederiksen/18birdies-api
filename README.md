@@ -52,6 +52,7 @@ To create a local golf-only store:
 18birdies clubs --json
 18birdies coverage --json
 18birdies handicap --json
+18birdies strokes-gained --json
 18birdies capabilities --json
 18birdies snapshot --json
 ```
@@ -70,7 +71,8 @@ invalid JSON says `export is not valid JSON`, an unreadable file says
 fixed messages.
 
 Round selection also comes before the subcommand and applies to `list`,
-`summary`, `trends`, `courses`, `clubs`, `coverage`, `handicap`, and `snapshot`:
+`summary`, `trends`, `courses`, `clubs`, `coverage`, `handicap`,
+`strokes-gained`, and `snapshot`:
 
 ```sh
 18birdies --timezone America/Los_Angeles --since 2025-01-01 --until 2025-12-31 summary --json
@@ -89,13 +91,24 @@ number up to 10000. It drops shorter recorded distances from the average,
 median, and percentiles. The shot count stays, and partial shots are still not
 classified.
 
-`trends` JSON is an object with `months`, `last_10`, and `last_20`. Each month
-and each recent window uses the same summary as `summary`. Round scoring counts
+`trends` JSON is an object with `undated_rounds`, `months`, `last_10`, and
+`last_20`. Each month and each recent window uses the same summary as
+`summary`. Rounds with no date stay out of the month buckets.
+`strokes-gained` JSON is `{overall, tee_to_green, putting, sand}`, each
+`{mean, rounds}`, for the selected rounds. Round scoring counts
 are under `stats.scoring`. Fairway and green miss counts are under
-`stats.fairway_directions` and `stats.gir_directions`. Course JSON adds
-`hole_strokes`, with `number`, `rounds`, `average_strokes`, and
+`stats.fairway_directions` and `stats.gir_directions`. Each scoring bucket also
+includes that hole-count's putt average, fairway percentage, and
+green-in-regulation percentage with their round counts. The selection-wide putt
+average is null when those putts come from more than one scored-hole count.
+Course JSON adds `hole_strokes`, with `number`, `rounds`, `average_strokes`, and
 `times_highest_score` for each scored hole. `handicap` JSON is
-`{source, ghin, rounds}` and `ghin` is false.
+`{source, ghin, numeric_rounds, newest_minus_oldest, rounds}` and `ghin` is
+false. Each round keeps `round_handicap` and adds `round_handicap_number` when
+the source value is numeric. `coverage` JSON adds key-presence counts, per-issue
+counts, discarded putt-hole and strokes-gained shapes, and
+`rounds_without_course`. Import JSON adds `store_rewritten`, `rounds_added`,
+`rounds_changed`, and `changed_rounds`.
 
 ## Retrieve Your Archive
 
@@ -194,7 +207,8 @@ for round_ in client.rounds.list(limit=5):
 round_ = client.rounds.get("18birdies:round:demo-round-01")
 shots = round_["holes"][0]["shots"]
 summary = client.stats.summary()
-trends = client.stats.trends()  # {"months", "last_10", "last_20"}
+trends = client.stats.trends()  # {"undated_rounds", "months", "last_10", "last_20"}
+gained = client.stats.strokes_gained()  # selected rounds, or every round when omitted
 courses = client.courses.list()
 distances = client.club_distances(minimum_yards=None)
 coverage = client.coverage()
@@ -281,7 +295,8 @@ stored.
 `longitude`, `start_point`, `end_point`, `startPoint`, and `endPoint` with null
 in that command's JSON. Scores, distances, and round totals stay. The store and
 the saved archive are unchanged. `--redact-identity` likewise nulls `id`,
-`source_id`, `course_id`, `course`, `name`, `round_handicap`, and `round_ids`
+`source_id`, `course_id`, `course`, `name`, `round_handicap`,
+`round_handicap_number`, and `round_ids`
 in that command's JSON. Use either flag before pasting output from a terminal
 scrollback.
 

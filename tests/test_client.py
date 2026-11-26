@@ -225,6 +225,12 @@ class ClientTests(unittest.TestCase):
                     "best_strokes": 9,
                     "average_score_to_par": 1,
                     "best_score_to_par": 1,
+                    "average_putts_per_round": 4,
+                    "putt_rounds": 1,
+                    "fairway_pct": 0,
+                    "fairway_rounds": 1,
+                    "gir_pct": 50,
+                    "gir_rounds": 1,
                     "scoring": unknown_scoring,
                     "fairway_directions": unknown_fairways,
                     "gir_directions": unknown_gir,
@@ -237,6 +243,12 @@ class ClientTests(unittest.TestCase):
                     "best_strokes": 36,
                     "average_score_to_par": 0,
                     "best_score_to_par": 0,
+                    "average_putts_per_round": None,
+                    "putt_rounds": 0,
+                    "fairway_pct": None,
+                    "fairway_rounds": 0,
+                    "gir_pct": None,
+                    "gir_rounds": 0,
                     "scoring": unknown_scoring,
                     "fairway_directions": unknown_fairways,
                     "gir_directions": unknown_gir,
@@ -246,6 +258,8 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(summary["scoring"], unknown_scoring)
         self.assertEqual(summary["fairway_rounds"], 1)
         self.assertEqual(summary["putt_rounds"], 1)
+        self.assertEqual(summary["average_putts_per_round"], 4)
+        self.assertIsNone(summary["putts_per_hole"])
         trends = self.client().trends()
         self.assertEqual(len(trends["months"]), 1)
         self.assertEqual(trends["last_10"]["rounds"], 2)
@@ -553,6 +567,7 @@ class ClientTests(unittest.TestCase):
             "clubs",
             "coverage",
             "handicap",
+            "strokes-gained",
             "capabilities",
             "snapshot",
         ):
@@ -815,6 +830,12 @@ class ClientTests(unittest.TestCase):
             [(item["date"], item["round_handicap"]) for item in series["rounds"]],
             [("2025-11-02", None), ("2025-11-01", "12.0")],
         )
+        self.assertEqual(
+            [item["round_handicap_number"] for item in series["rounds"]],
+            [None, 12.0],
+        )
+        self.assertEqual(series["numeric_rounds"], 1)
+        self.assertIsNone(series["newest_minus_oldest"])
 
     def test_round_filters_use_selected_dates_course_holes_and_last(self):
         client = self.client()
@@ -899,6 +920,7 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("12.0", text)
         self.assertIsNone(redacted["rounds"][1]["course"])
         self.assertIsNone(redacted["rounds"][1]["round_handicap"])
+        self.assertIsNone(redacted["handicap_series"]["rounds"][1]["round_handicap_number"])
         self.assertEqual(redacted["summary"]["rounds"], 2)
         self.assertEqual(
             redacted["rounds"][1]["shots"][0]["start_point"]["latitude"],
@@ -963,6 +985,419 @@ class ClientTests(unittest.TestCase):
                 api.main(["--export", str(self.path), "--minimum-yards", "100", "summary"]), 2
             )
         self.assertIn("Minimum yardage applies to clubs and snapshot", yardage.getvalue())
+
+    def test_putt_average_stays_in_buckets_and_not_across_lengths(self):
+        self.data["myData"]["activityData"]["rounds"][1]["stats"]["putts"] = 18
+        summary = self.client().summary()
+        by_holes = {bucket["holes_scored"]: bucket for bucket in summary["scoring_by_holes"]}
+        self.assertEqual(by_holes[2]["average_putts_per_round"], 4)
+        self.assertEqual(by_holes[2]["putt_rounds"], 1)
+        self.assertEqual(by_holes[9]["average_putts_per_round"], 18)
+        self.assertEqual(by_holes[9]["putt_rounds"], 1)
+        self.assertIsNone(summary["average_putts_per_round"])
+        self.assertEqual(summary["putt_rounds"], 2)
+        self.assertEqual(summary["fairway_pct"], 0)
+        self.assertIsNone(summary["putts_per_hole"])
+        nine = self.data["myData"]["activityData"]["rounds"][1]
+        nine.update(holeStrokes=[4, 4], strokes=8, score=0)
+        nine["stats"]["putts"] = 10
+        same_length = self.client().summary()
+        self.assertEqual(same_length["average_putts_per_round"], 7)
+        self.assertEqual(same_length["scoring_by_holes"][0]["holes_scored"], 2)
+        self.assertEqual(same_length["scoring_by_holes"][0]["average_putts_per_round"], 7)
+
+    def test_import_counts_added_and_changed_rounds_without_values(self):
+        first = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        changes = first.import_changes
+        self.assertEqual(
+            changes,
+            {
+                "store_rewritten": True,
+                "rounds_added": 2,
+                "rounds_changed": 0,
+                "changed_rounds": {
+                    "strokes": 0,
+                    "holeStrokes": 0,
+                    "shotEntries": 0,
+                    "roundHandicap": 0,
+                },
+            },
+        )
+        self.assertIsNone(api.EighteenBirdiesClient(store_path=self.store).import_changes)
+        dated = api.EighteenBirdiesClient.import_export(
+            self.path, store_path=self.store, acquired_at="2026-10-19T01:13:00Z"
+        )
+        self.assertTrue(dated.import_changes["store_rewritten"])
+        self.assertEqual(dated.import_changes["rounds_added"], 0)
+        self.assertEqual(dated.import_changes["rounds_changed"], 0)
+        self.assertEqual(dated.provenance["acquired_at"], "2026-10-19T01:13:00+00:00")
+        compact = json.dumps(self.data, separators=(",", ":"))
+        self.path.write_text(compact, encoding="utf-8")
+        rewritten = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(rewritten.import_changes["store_rewritten"], True)
+        self.assertEqual(rewritten.import_changes["rounds_added"], 0)
+        self.assertEqual(rewritten.import_changes["rounds_changed"], 0)
+        self.data["myData"]["activityData"]["rounds"][0]["score"] = 3
+        self.write()
+        score_only = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(score_only.import_changes["store_rewritten"], True)
+        self.assertEqual(score_only.import_changes["rounds_changed"], 0)
+        raw = self.data["myData"]["activityData"]["rounds"][0]
+        raw["strokes"] = 10
+        raw["holeStrokes"] = [4, 6, 0]
+        raw["roundHandicap"] = "11.0"
+        raw["shotEntries"].pop()
+        self.write()
+        changed = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(
+            changed.import_changes,
+            {
+                "store_rewritten": True,
+                "rounds_added": 0,
+                "rounds_changed": 1,
+                "changed_rounds": {
+                    "strokes": 1,
+                    "holeStrokes": 1,
+                    "shotEntries": 1,
+                    "roundHandicap": 1,
+                },
+            },
+        )
+        self.assertNotIn("round-a", json.dumps(changed.import_changes))
+        self.assertNotIn("Synthetic", json.dumps(changed.import_changes))
+        self.assertNotIn("11.0", json.dumps(changed.import_changes))
+        added = {
+            "id": "round-c",
+            "timestamp": 1762214400000,
+            "clubId": {"id": "course-a"},
+            "strokes": 4,
+            "score": 0,
+            "holeStrokes": [4],
+        }
+        self.data["myData"]["activityData"]["rounds"].append(added)
+        self.data["myData"]["activityData"]["roundCount"] = 3
+        self.write()
+        grown = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(grown.import_changes["rounds_added"], 1)
+        self.assertEqual(grown.import_changes["rounds_changed"], 0)
+        before = self.store.read_bytes()
+        repeated = api.EighteenBirdiesClient.import_export(self.path, store_path=self.store)
+        self.assertEqual(
+            repeated.import_changes,
+            {
+                "store_rewritten": False,
+                "rounds_added": 0,
+                "rounds_changed": 0,
+                "changed_rounds": {
+                    "strokes": 0,
+                    "holeStrokes": 0,
+                    "shotEntries": 0,
+                    "roundHandicap": 0,
+                },
+            },
+        )
+        self.assertEqual(self.store.read_bytes(), before)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                api.main(["--store", str(self.store), "import", str(self.path), "--json"]),
+                0,
+            )
+        imported = json.loads(output.getvalue())
+        self.assertFalse(imported["store_rewritten"])
+        self.assertEqual(imported["rounds_added"], 0)
+        self.assertEqual(imported["imported_rounds"], 3)
+        self.assertEqual(set(imported["changed_rounds"]), set(api._CHANGED_ROUND_FIELDS))
+
+    def test_coverage_counts_discarded_stats_keys_issues_and_missing_courses(self):
+        coverage = self.client().coverage()
+        self.assertEqual(
+            coverage["putt_hole_count"],
+            {"missing": 1, "zero": 1, "positive": 0, "positive_equals_holes_scored": 0},
+        )
+        self.assertEqual(
+            coverage["strokes_gained_counts"],
+            {
+                "overall": {"absent": 1, "exactly_100": 1, "kept": 0},
+                "tee_to_green": {"absent": 1, "exactly_100": 1, "kept": 0},
+                "putting": {"absent": 1, "exactly_100": 0, "kept": 1},
+                "sand": {"absent": 2, "exactly_100": 0, "kept": 0},
+            },
+        )
+        for counts in coverage["strokes_gained_counts"].values():
+            self.assertEqual(sum(counts.values()), coverage["rounds"])
+        self.assertIsNone(self.client().get_round("round-a")["stats"]["putts_per_hole"])
+        self.assertIsNone(self.client().get_round("round-a")["stats"]["putt_hole_count"])
+        self.assertFalse(self.client().handicap_series()["ghin"])
+        self.assertEqual(
+            coverage["recognized_keys"]["rounds"],
+            {
+                "id": 2,
+                "timestamp": 2,
+                "clubId": 2,
+                "score": 2,
+                "strokes": 2,
+                "holeStrokes": 2,
+                "stats": 2,
+                "roundHandicap": 1,
+                "shotEntries": 2,
+            },
+        )
+        self.assertEqual(
+            coverage["recognized_keys"]["shot_entries"],
+            {"holeNumber": 2, "stickTypeAndNumber": 2, "distanceInYards": 2},
+        )
+        self.assertEqual(
+            coverage["issue_counts"],
+            {
+                "scored_holes_without_shots": 2,
+                "shots_without_matching_hole_slot": 0,
+                "shots_missing_distance": 0,
+                "shots_missing_club": 0,
+                "reported_strokes_differ_from_scored_holes": 0,
+                "unscored_hole_slots": 1,
+                "hole_scores_unavailable": 0,
+            },
+        )
+        self.assertEqual(list(coverage["issue_counts"]), list(api.COVERAGE_ISSUES))
+        self.assertEqual(coverage["rounds_without_course"], 0)
+        nine = self.client().coverage(self.client().select_rounds(holes=9))
+        self.assertEqual(nine["recognized_keys"]["rounds"]["roundHandicap"], 0)
+        self.assertEqual(nine["recognized_keys"]["shot_entries"]["distanceInYards"], 0)
+        self.assertEqual(nine["putt_hole_count"]["missing"], 1)
+        self.assertEqual(nine["strokes_gained_counts"]["putting"]["kept"], 0)
+        rounds = self.data["myData"]["activityData"]["rounds"]
+        rounds[0]["stats"]["puttHoleCount"] = 2
+        rounds[1]["stats"]["puttHoleCount"] = 4
+        rounds[0]["stats"]["recommendedStats"] = [
+            {"type": "SG_OVERALL", "noStats": True, "value": 100},
+            {"type": "SG_PUTTING", "noStats": False, "value": -1.5},
+        ]
+        rounds[1]["stats"]["recommendedStats"] = [
+            {"type": "SG_SAND", "noStats": False, "value": 0.4}
+        ]
+        del rounds[0]["shotEntries"]
+        rounds.append(
+            {
+                "id": "loose",
+                "timestamp": 1,
+                "strokes": 5,
+                "holeStrokes": [5],
+                "shotEntries": [{"holeNumber": 9}],
+            }
+        )
+        rounds.append({"id": "blank", "timestamp": 2, "clubId": {"id": "course-a"}})
+        rounds.append(
+            {
+                "id": "mismatch",
+                "timestamp": 3,
+                "clubId": {"id": "course-a"},
+                "strokes": 10,
+                "holeStrokes": [4, 5],
+            }
+        )
+        self.data["myData"]["activityData"]["roundCount"] = 5
+        client = self.client()
+        counted = client.coverage()
+        self.assertEqual(
+            counted["putt_hole_count"],
+            {"missing": 3, "zero": 0, "positive": 2, "positive_equals_holes_scored": 1},
+        )
+        self.assertEqual(counted["strokes_gained_counts"]["overall"]["absent"], 5)
+        self.assertEqual(counted["strokes_gained_counts"]["overall"]["exactly_100"], 0)
+        self.assertEqual(counted["strokes_gained_counts"]["sand"]["kept"], 1)
+        self.assertEqual(counted["strokes_gained_counts"]["putting"]["kept"], 1)
+        self.assertIsNone(client.get_round("round-a")["stats"]["strokes_gained"]["overall"])
+        self.assertEqual(counted["recognized_keys"]["rounds"]["shotEntries"], 2)
+        self.assertEqual(counted["recognized_keys"]["shot_entries"]["holeNumber"], 1)
+        self.assertEqual(len(client.get_round("round-a")["shots"]), 0)
+        self.assertEqual(len(client.get_round("round-b")["shots"]), 0)
+        self.assertEqual(counted["rounds_without_course"], 1)
+        self.assertTrue(all(count >= 1 for count in counted["issue_counts"].values()))
+        for round_ in client.list_rounds():
+            for issue in round_["coverage"]["issues"]:
+                self.assertIn(issue, counted["issue_counts"])
+        self.assertEqual(client.summary()["rounds"], 5)
+        self.assertEqual(sum(course["rounds"] for course in client.course_history()), 4)
+
+    def test_handicap_numbers_show_direction_and_keep_source_text(self):
+        rounds = self.data["myData"]["activityData"]["rounds"]
+        rounds[1]["roundHandicap"] = 15
+        rounds.append(
+            {
+                "id": "note",
+                "timestamp": 1761955200000,
+                "clubId": {"id": "course-a"},
+                "strokes": 4,
+                "holeStrokes": [4],
+                "roundHandicap": "scratch",
+            }
+        )
+        rounds.append(
+            {
+                "id": "float-value",
+                "timestamp": 1761868800000,
+                "clubId": {"id": "course-a"},
+                "strokes": 4,
+                "holeStrokes": [4],
+                "roundHandicap": 10.5,
+            }
+        )
+        rounds.append(
+            {
+                "id": "signed",
+                "timestamp": 1761782400000,
+                "clubId": {"id": "course-a"},
+                "strokes": 4,
+                "holeStrokes": [4],
+                "roundHandicap": "-1.5",
+            }
+        )
+        rounds.append(
+            {
+                "id": "labeled",
+                "timestamp": 1761696000000,
+                "clubId": {"id": "course-a"},
+                "strokes": 4,
+                "holeStrokes": [4],
+                "roundHandicap": "+4",
+            }
+        )
+        self.data["myData"]["activityData"]["roundCount"] = 6
+        series = self.client().handicap_series()
+        self.assertFalse(series["ghin"])
+        by_id = {item["id"].removeprefix("18birdies:round:"): item for item in series["rounds"]}
+        self.assertEqual(by_id["round-b"]["round_handicap"], 15)
+        self.assertEqual(by_id["round-b"]["round_handicap_number"], 15.0)
+        self.assertEqual(by_id["round-a"]["round_handicap"], "12.0")
+        self.assertEqual(by_id["round-a"]["round_handicap_number"], 12.0)
+        self.assertEqual(by_id["note"]["round_handicap"], "scratch")
+        self.assertIsNone(by_id["note"]["round_handicap_number"])
+        self.assertEqual(by_id["float-value"]["round_handicap_number"], 10.5)
+        self.assertEqual(by_id["signed"]["round_handicap_number"], -1.5)
+        self.assertEqual(by_id["labeled"]["round_handicap"], "+4")
+        self.assertIsNone(by_id["labeled"]["round_handicap_number"])
+        self.assertEqual(series["numeric_rounds"], 4)
+        self.assertEqual(series["newest_minus_oldest"], 16.5)
+        self.assertEqual(
+            [
+                item["round_handicap_number"]
+                for item in series["rounds"]
+                if item["round_handicap_number"] is not None
+            ][0],
+            15.0,
+        )
+
+    def test_strokes_gained_command_uses_the_selected_rounds(self):
+        self.data["myData"]["activityData"]["rounds"][1]["stats"]["strokeGainOverall"] = -4
+        client = self.client()
+        nine = client.select_rounds(holes=9)
+        partial = client.select_rounds(holes=2)
+        self.assertEqual(client.stats.strokes_gained(nine)["overall"], {"mean": -4, "rounds": 1})
+        self.assertEqual(client.strokes_gained(nine), client.stats.strokes_gained(nine))
+        self.assertEqual(
+            client.stats.strokes_gained(partial)["putting"], {"mean": -1.5, "rounds": 1}
+        )
+        self.assertEqual(
+            client.stats.strokes_gained(partial)["overall"], {"mean": None, "rounds": 0}
+        )
+        self.assertEqual(client.stats.strokes_gained([])["sand"], {"mean": None, "rounds": 0})
+        self.assertEqual(client.stats.strokes_gained()["overall"]["rounds"], 1)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--holes", "9", "strokes-gained"]),
+                0,
+            )
+        self.assertEqual(json.loads(output.getvalue())["overall"], {"mean": -4, "rounds": 1})
+
+    def test_trends_count_undated_rounds_outside_month_buckets(self):
+        base = 1762041600000
+        rounds = [
+            {
+                "id": f"d{index}",
+                "timestamp": base + index * 86400000,
+                "strokes": 4,
+                "holeStrokes": [4],
+            }
+            for index in range(10)
+        ]
+        rounds.append({"id": "undated", "strokes": 4, "holeStrokes": [4], "stats": {"putts": 30}})
+        self.data["myData"]["activityData"]["rounds"] = rounds
+        self.data["myData"]["activityData"]["roundCount"] = 11
+        trends = self.client().trends()
+        self.assertEqual(trends["undated_rounds"], 1)
+        self.assertEqual(sum(month["rounds"] for month in trends["months"]), 10)
+        self.assertEqual(sum(month["putt_rounds"] for month in trends["months"]), 0)
+        self.assertEqual(trends["last_10"]["rounds"], 10)
+        self.assertEqual(trends["last_10"]["putt_rounds"], 0)
+        self.assertEqual(trends["last_20"]["putt_rounds"], 1)
+        self.assertEqual(self.client().summary()["putt_rounds"], 1)
+
+    def test_zero_loft_remains_in_the_club_label(self):
+        shots = self.data["myData"]["activityData"]["rounds"][0]["shotEntries"]
+        shots.append(
+            {
+                "holeNumber": 1,
+                "distanceInYards": 8,
+                "stickTypeAndNumber": {"type": "PUTTER", "number": "1", "loftAngle": 0},
+            }
+        )
+        shots.append(
+            {
+                "holeNumber": 1,
+                "distanceInYards": 90,
+                "stickTypeAndNumber": {"type": "WEDGE", "number": "PW"},
+            }
+        )
+        clubs = {club["type"]: club for club in self.client().club_distances()}
+        self.assertEqual(clubs["PUTTER"]["loft_angle"], 0)
+        self.assertEqual(clubs["PUTTER"]["club"], "PUTTER 1 0deg")
+        self.assertIsNone(clubs["WEDGE"]["loft_angle"])
+        self.assertEqual(clubs["WEDGE"]["club"], "WEDGE PW")
+
+    def test_filter_and_yardage_errors_follow_the_command_tuples(self):
+        self.assertIn("strokes-gained", api.FILTER_COMMANDS)
+        self.assertEqual(
+            api._FILTER_ERROR,
+            "Round filters apply to " + api._english_list(api.FILTER_COMMANDS),
+        )
+        self.assertEqual(
+            api._YARDAGE_ERROR,
+            "Minimum yardage applies to " + api._english_list(api.YARDAGE_COMMANDS),
+        )
+        self.assertIn(api._FILTER_ERROR, api._SAFE_CLI_ERRORS)
+        self.assertIn(api._YARDAGE_ERROR, api._SAFE_CLI_ERRORS)
+        self.assertEqual(api._english_list(("only",)), "only")
+        self.assertEqual(
+            api._cli_error(api.EighteenBirdiesError(api._FILTER_ERROR)),
+            f"18Birdies export error: {api._FILTER_ERROR}",
+        )
+        self.assertEqual(
+            api._cli_error(api.EighteenBirdiesError(api._YARDAGE_ERROR)),
+            f"18Birdies export error: {api._YARDAGE_ERROR}",
+        )
+        self.assertIn(
+            "invalid input",
+            api._cli_error(api.EighteenBirdiesError("Round filters apply to list")),
+        )
+        refused = io.StringIO()
+        with contextlib.redirect_stderr(refused):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--last", "5", "capabilities"]),
+                2,
+            )
+        self.assertIn(api._FILTER_ERROR, refused.getvalue())
+        self.assertIn("strokes-gained", refused.getvalue())
+        self.assertNotIn("invalid input", refused.getvalue())
+        yardage = io.StringIO()
+        with contextlib.redirect_stderr(yardage):
+            self.assertEqual(
+                api.main(["--export", str(self.path), "--minimum-yards", "100", "strokes-gained"]),
+                2,
+            )
+        self.assertIn(api._YARDAGE_ERROR, yardage.getvalue())
+        self.assertNotIn("invalid input", yardage.getvalue())
 
 
 if __name__ == "__main__":
